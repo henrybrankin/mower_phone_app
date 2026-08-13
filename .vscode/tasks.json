@@ -1,0 +1,345 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Arduino: Compile mower_mcu",
+			"type": "shell",
+			"command": "arduino-cli",
+			"args": [
+				"compile",
+				"--fqbn",
+				"Seeeduino:nrf52:xiaonRF52840",
+				"firmware/mower_mcu"
+			],
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Arduino: Upload mower_mcu",
+			"type": "shell",
+			"command": "arduino-cli",
+			"args": [
+				"upload",
+				"-p",
+				"${input:arduinoPort}",
+				"--fqbn",
+				"Seeeduino:nrf52:xiaonRF52840",
+				"firmware/mower_mcu"
+			],
+			"group": "none",
+			"problemMatcher": []
+		},
+		{
+			"label": "PlatformIO: Build firmware",
+			"type": "shell",
+			"command": "pio",
+			"args": [
+				"run",
+				"-d",
+				"firmware"
+			],
+			"group": {
+				"kind": "build",
+				"isDefault": false
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "PlatformIO: Upload firmware",
+			"type": "shell",
+			"command": "pio",
+			"args": [
+				"run",
+				"-d",
+				"firmware",
+				"-t",
+				"upload",
+				"-e",
+				"xiao_nrf52840"
+			],
+			"group": "none",
+			"problemMatcher": []
+		},
+		{
+			"label": "Upload mower_mcu COM8 now",
+			"type": "shell",
+			"command": "arduino-cli",
+			"args": [
+				"upload",
+				"-p",
+				"COM8",
+				"--fqbn",
+				"arduino:mbed_nano:nano33ble",
+				"firmware/mower_mcu"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "arduino board list now",
+			"type": "shell",
+			"command": "arduino-cli",
+			"args": [
+				"board",
+				"list"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "arduino lib list bmi now",
+			"type": "shell",
+			"command": "arduino-cli",
+			"args": [
+				"lib",
+				"list"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "show bmi examples begin usage",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-Command",
+				"Get-ChildItem -Path \"$env:USERPROFILE\\Documents\\Arduino\\libraries\\Arduino_BMI270_BMM150\\examples\" -Recurse -Include *.ino | ForEach-Object { Write-Output (\"--- \" + $_.FullName); Get-Content $_.FullName | Select-String -Pattern \"IMU.begin|setContinuousMode|BOSCH_ACCEL_AND_MAGN\" -SimpleMatch }"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "scan bmi examples script",
+			"type": "shell",
+			"command": "powershell.exe",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"temp_scan_bmi_examples.ps1"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "compile mower mcu now",
+			"type": "shell",
+			"command": "arduino-cli",
+			"args": [
+				"compile",
+				"--fqbn",
+				"arduino:mbed_nano:nano33ble",
+				"firmware/mower_mcu"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "upload mower mcu now",
+			"type": "shell",
+			"command": "arduino-cli",
+			"args": [
+				"upload",
+				"-p",
+				"COM8",
+				"--fqbn",
+				"arduino:mbed_nano:nano33ble",
+				"firmware/mower_mcu"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "compile mower mcu imu fix",
+			"type": "shell",
+			"command": "arduino-cli",
+			"args": [
+				"compile",
+				"--fqbn",
+				"arduino:mbed_nano:nano33ble",
+				"firmware/mower_mcu"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "upload mower mcu imu fix",
+			"type": "shell",
+			"command": "arduino-cli",
+			"args": [
+				"upload",
+				"-p",
+				"COM8",
+				"--fqbn",
+				"arduino:mbed_nano:nano33ble",
+				"firmware/mower_mcu"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "verify firmware compile now",
+			"type": "shell",
+			"command": "arduino-cli",
+			"args": [
+				"compile",
+				"--fqbn",
+				"arduino:mbed_nano:nano33ble",
+				"firmware/mower_mcu"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "verify flutter windows build now",
+			"type": "shell",
+			"command": "flutter",
+			"args": [
+				"build",
+				"windows"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "compile mower mcu gyro-z",
+			"type": "shell",
+			"command": "arduino-cli",
+			"args": [
+				"compile",
+				"--fqbn",
+				"arduino:mbed_nano:nano33ble",
+				"firmware/mower_mcu"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "upload mower mcu gyro-z",
+			"type": "shell",
+			"command": "arduino-cli",
+			"args": [
+				"upload",
+				"-p",
+				"COM8",
+				"--fqbn",
+				"arduino:mbed_nano:nano33ble",
+				"firmware/mower_mcu"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "compile mower mcu responsiveness",
+			"type": "shell",
+			"command": "arduino-cli",
+			"args": [
+				"compile",
+				"--fqbn",
+				"arduino:mbed_nano:nano33ble",
+				"firmware/mower_mcu"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "upload mower mcu responsiveness",
+			"type": "shell",
+			"command": "arduino-cli",
+			"args": [
+				"upload",
+				"-p",
+				"COM8",
+				"--fqbn",
+				"arduino:mbed_nano:nano33ble",
+				"firmware/mower_mcu"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "scan imu magnetometer api",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-Command",
+				"Get-ChildItem \"$env:USERPROFILE\\Documents\\Arduino\\libraries\\Arduino_BMI270_BMM150\" -Recurse -Include *.ino,*.h,*.cpp | Select-String -Pattern \"magnetic|magnet|readMag|FieldAvailable\" | Select-Object -First 80"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "run magnetometer api scan script",
+			"type": "shell",
+			"command": "powershell.exe",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"temp_scan_mag_api.ps1"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "compile mower mcu heading",
+			"type": "shell",
+			"command": "arduino-cli",
+			"args": [
+				"compile",
+				"--fqbn",
+				"arduino:mbed_nano:nano33ble",
+				"firmware/mower_mcu"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "upload mower mcu heading",
+			"type": "shell",
+			"command": "arduino-cli",
+			"args": [
+				"upload",
+				"-p",
+				"COM8",
+				"--fqbn",
+				"arduino:mbed_nano:nano33ble",
+				"firmware/mower_mcu"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "build flutter windows heading",
+			"type": "shell",
+			"command": "flutter",
+			"args": [
+				"build",
+				"windows"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "compile mower mcu heading fix",
+			"type": "shell",
+			"command": "arduino-cli",
+			"args": [
+				"compile",
+				"--fqbn",
+				"arduino:mbed_nano:nano33ble",
+				"firmware/mower_mcu"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "upload mower mcu heading fix",
+			"type": "shell",
+			"command": "arduino-cli",
+			"args": [
+				"upload",
+				"-p",
+				"COM8",
+				"--fqbn",
+				"arduino:mbed_nano:nano33ble",
+				"firmware/mower_mcu"
+			],
+			"isBackground": false
+		}
+	],
+	"inputs": [
+		{
+			"id": "arduinoPort",
+			"type": "promptString",
+			"description": "COM port to use for upload (e.g. COM16)",
+			"default": "COM16"
+		}
+	]
+}

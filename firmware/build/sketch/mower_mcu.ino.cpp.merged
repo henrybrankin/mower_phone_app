@@ -1,0 +1,98 @@
+#include <Arduino.h>
+#line 1 "C:\\src\\mower_phone_app\\firmware\\mower_mcu\\mower_mcu.ino"
+#include <NimBLEDevice.h>
+
+// Service and characteristic UUIDs
+#define MOWER_SERVICE_UUID        "12345678-1234-5678-1234-56789abcdef0"
+#define TELEMETRY_CHAR_UUID       "12345678-1234-5678-1234-56789abcdef1"
+#define CONTROL_CHAR_UUID         "12345678-1234-5678-1234-56789abcdef2"
+
+static NimBLECharacteristic* pTelemetryChar = nullptr;
+static NimBLECharacteristic* pControlChar = nullptr;
+bool g_isConnected = false;
+bool g_hasBeenConnected = false;
+bool g_zeroCommandReceived = false;
+unsigned long lastMillis = 0;
+
+class ControlCallbacks : public NimBLECharacteristicCallbacks {
+  void onWrite(NimBLECharacteristic* pChar) override {
+    std::string value = pChar->getValue();
+    if (!value.empty() && static_cast<uint8_t>(value[0]) == 0x01) {
+      g_zeroCommandReceived = true;
+      Serial.println("Received zero command");
+    }
+  }
+};
+
+class ServerCallbacks : public NimBLEServerCallbacks {
+  void onConnect(NimBLEServer* pServer) override {
+    g_isConnected = true;
+    if (!g_hasBeenConnected) {
+      g_hasBeenConnected = true;
+      NimBLEDevice::stopAdvertising();
+      Serial.println("Connected: advertising stopped");
+    } else {
+      Serial.println("Connected again");
+    }
+  }
+
+  void onDisconnect(NimBLEServer* pServer) override {
+    g_isConnected = false;
+    Serial.println("Disconnected");
+  }
+};
+
+void setup() {
+  Serial.begin(115200);
+  NimBLEDevice::init("MowerXiao");
+
+  NimBLEServer* pServer = NimBLEDevice::createServer();
+  pServer->setCallbacks(new ServerCallbacks());
+
+  NimBLEService* pService = pServer->createService(MOWER_SERVICE_UUID);
+  pTelemetryChar = pService->createCharacteristic(TELEMETRY_CHAR_UUID, NIMBLE_PROPERTY::NOTIFY);
+  pTelemetryChar->addDescriptor(new NimBLE2902());
+  pControlChar = pService->createCharacteristic(CONTROL_CHAR_UUID, NIMBLE_PROPERTY::WRITE);
+  pControlChar->setCallbacks(new ControlCallbacks());
+
+  pService->start();
+
+  NimBLEAdvertising* pAdv = NimBLEDevice::getAdvertising();
+  pAdv->addServiceUUID(MOWER_SERVICE_UUID);
+  pAdv->setScanResponse(false);
+  pAdv->start();
+  Serial.println("Advertising started");
+}
+
+void loop() {
+  unsigned long now = millis();
+  if (now - lastMillis < 500) {
+    delay(10);
+    return;
+  }
+
+  lastMillis = now;
+
+  int8_t roll = random(-20, 20);
+  int8_t pitch = random(-20, 20);
+  uint8_t pressure = random(20, 100);
+  int8_t temp = random(65, 85);
+  uint8_t packet[4];
+  packet[0] = static_cast<uint8_t>(roll);
+  packet[1] = static_cast<uint8_t>(pitch);
+  packet[2] = pressure;
+  packet[3] = static_cast<uint8_t>(temp);
+
+  if (g_isConnected && pTelemetryChar) {
+    pTelemetryChar->setValue(packet, sizeof(packet));
+    pTelemetryChar->notify();
+  }
+
+  if (g_zeroCommandReceived) {
+    Serial.println("Zero calibration command processed");
+    g_zeroCommandReceived = false;
+  }
+
+  delay(10);
+}
+
