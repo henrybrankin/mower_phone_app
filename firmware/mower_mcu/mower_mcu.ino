@@ -66,9 +66,6 @@ BLECharacteristic controlChar(CONTROL_CHAR_UUID, BLEWrite, 1);
 
 void setup() {
   Serial.begin(115200);
-  while (!Serial) {
-    ;
-  }
 
   Wire.begin();
   IMU.debug(Serial);

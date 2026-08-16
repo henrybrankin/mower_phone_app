@@ -65,3 +65,7 @@ If you restart the project later, use this document as the high-level summary:
 - debugging utility: time-sync and event log retrieval are valuable for diagnostics
 - OTA firmware updates over BLE will be required.
 
+## Development environments
+
+- macOS project directory: `~/development/mower_phone_app`
+
