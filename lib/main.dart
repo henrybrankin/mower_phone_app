@@ -65,9 +65,12 @@ class _HomeScreenState extends State<HomeScreen> {
       setState(() => _status = 'Found ${device.advertisementData.advName}');
       await _bleService.connectAndDiscover();
       setState(() => _status = 'Connected');
-      _bleSub = _bleService.subscribeTelemetry().listen(_onTelemetryReceived, onError: (error) {
-        setState(() => _status = 'Telemetry error: $error');
-      });
+      _bleSub = _bleService.subscribeTelemetry().listen(
+        _onTelemetryReceived,
+        onError: (error) {
+          setState(() => _status = 'Telemetry error: $error');
+        },
+      );
       setState(() => _connected = true);
     } catch (error) {
       setState(() => _status = 'Connect failed: $error');
@@ -107,9 +110,9 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _requestZero() async {
     if (!_connected) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Not connected to mower')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Not connected to mower')));
       return;
     }
 
@@ -129,7 +132,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _openHeatmap() {
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Heatmap is not available for BLE mode yet')),
+      const SnackBar(
+        content: Text('Heatmap is not available for BLE mode yet'),
+      ),
     );
   }
 
@@ -144,7 +149,7 @@ class _HomeScreenState extends State<HomeScreen> {
             onPressed: _openHeatmap,
             icon: const Icon(Icons.map),
             tooltip: 'Open failure heatmap',
-          )
+          ),
         ],
       ),
       body: Center(
@@ -154,30 +159,29 @@ class _HomeScreenState extends State<HomeScreen> {
             padding: const EdgeInsets.all(12),
             child: Column(
               children: [
-                Row(
+                StatusPanel(last: _last),
+                const SizedBox(height: 8),
+                Wrap(
+                  alignment: WrapAlignment.center,
+                  spacing: 8,
+                  runSpacing: 8,
                   children: [
-                    Expanded(child: StatusPanel(last: _last)),
-                    const SizedBox(width: 12),
-                    Column(
-                      children: [
-                        ElevatedButton.icon(
-                          onPressed: _connected ? _disconnect : _connect,
-                          icon: Icon(_connected ? Icons.link_off : Icons.wifi_tethering),
-                          label: Text(_connected ? 'Disconnect' : 'Connect'),
-                        ),
-                        const SizedBox(height: 8),
-                        ElevatedButton.icon(
-                          onPressed: _requestZero,
-                          icon: const Icon(Icons.my_location),
-                          label: const Text('Zero mower'),
-                        ),
-                        const SizedBox(height: 8),
-                        ElevatedButton.icon(
-                          onPressed: _openHeatmap,
-                          icon: const Icon(Icons.map),
-                          label: const Text('Show map'),
-                        ),
-                      ],
+                    ElevatedButton.icon(
+                      onPressed: _connected ? _disconnect : _connect,
+                      icon: Icon(
+                        _connected ? Icons.link_off : Icons.wifi_tethering,
+                      ),
+                      label: Text(_connected ? 'Disconnect' : 'Connect'),
+                    ),
+                    ElevatedButton.icon(
+                      onPressed: _requestZero,
+                      icon: const Icon(Icons.my_location),
+                      label: const Text('Zero mower'),
+                    ),
+                    ElevatedButton.icon(
+                      onPressed: _openHeatmap,
+                      icon: const Icon(Icons.map),
+                      label: const Text('Show map'),
                     ),
                   ],
                 ),
@@ -224,10 +228,7 @@ class StatusPanel extends StatelessWidget {
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(12),
           gradient: LinearGradient(
-            colors: [
-              Colors.green.shade600,
-              Colors.green.shade400,
-            ],
+            colors: [Colors.green.shade600, Colors.green.shade400],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
@@ -242,9 +243,19 @@ class StatusPanel extends StatelessWidget {
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('Mower', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                    const Text(
+                      'Mower',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                     const SizedBox(height: 6),
-                    Text(connected ? 'Connected' : 'Disconnected', style: const TextStyle(color: Colors.white70)),
+                    Text(
+                      connected ? 'Connected' : 'Disconnected',
+                      style: const TextStyle(color: Colors.white70),
+                    ),
                   ],
                 ),
               ],
@@ -253,12 +264,24 @@ class StatusPanel extends StatelessWidget {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                _smallStat('Heading', last != null ? _formatHeading(last!.oilPressure) : '—'),
-                _smallStat('Gyro Z', last != null ? _formatSigned(last!.oilTemp) : '—'),
-                _smallStat('Roll', last != null ? _formatSigned(last!.rollDeg) : '—'),
-                _smallStat('Pitch', last != null ? _formatSigned(last!.pitchDeg) : '—'),
+                _smallStat(
+                  'Heading',
+                  last != null ? _formatHeading(last!.oilPressure) : '—',
+                ),
+                _smallStat(
+                  'Gyro Z',
+                  last != null ? _formatSigned(last!.oilTemp) : '—',
+                ),
+                _smallStat(
+                  'Roll',
+                  last != null ? _formatSigned(last!.rollDeg) : '—',
+                ),
+                _smallStat(
+                  'Pitch',
+                  last != null ? _formatSigned(last!.pitchDeg) : '—',
+                ),
               ],
-            )
+            ),
           ],
         ),
       ),
@@ -269,8 +292,17 @@ class StatusPanel extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: const TextStyle(color: Colors.white70, fontSize: 12)),
-        Text(value, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        Text(
+          label,
+          style: const TextStyle(color: Colors.white70, fontSize: 12),
+        ),
+        Text(
+          value,
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
       ],
     );
   }
@@ -300,8 +332,15 @@ class LiveReadout extends StatelessWidget {
   }
 
   Widget _infoColumn(String label, String value) => Column(
-        children: [Text(label, style: const TextStyle(color: Colors.black54)), const SizedBox(height: 6), Text(value, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16))],
-      );
+    children: [
+      Text(label, style: const TextStyle(color: Colors.black54)),
+      const SizedBox(height: 6),
+      Text(
+        value,
+        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+      ),
+    ],
+  );
 }
 
 class AttitudeIndicator extends StatelessWidget {
@@ -309,7 +348,12 @@ class AttitudeIndicator extends StatelessWidget {
   final double pitchDeg;
   final double headingDeg;
 
-  const AttitudeIndicator({super.key, required this.rollDeg, required this.pitchDeg, required this.headingDeg});
+  const AttitudeIndicator({
+    super.key,
+    required this.rollDeg,
+    required this.pitchDeg,
+    required this.headingDeg,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -319,14 +363,20 @@ class AttitudeIndicator extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Attitude', style: TextStyle(fontWeight: FontWeight.w700)),
+            const Text(
+              'Attitude',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
             const SizedBox(height: 10),
             Center(
               child: SizedBox(
                 width: 210,
                 height: 210,
                 child: CustomPaint(
-                  painter: _AttitudePainter(rollDeg: rollDeg, pitchDeg: pitchDeg),
+                  painter: _AttitudePainter(
+                    rollDeg: rollDeg,
+                    pitchDeg: pitchDeg,
+                  ),
                 ),
               ),
             ),
@@ -350,9 +400,7 @@ class HeadingTape extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return CustomPaint(
-      painter: _HeadingTapePainter(headingDeg: headingDeg),
-    );
+    return CustomPaint(painter: _HeadingTapePainter(headingDeg: headingDeg));
   }
 }
 
@@ -363,7 +411,10 @@ class _HeadingTapePainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final rect = RRect.fromRectAndRadius(Offset.zero & size, const Radius.circular(8));
+    final rect = RRect.fromRectAndRadius(
+      Offset.zero & size,
+      const Radius.circular(8),
+    );
     final bgPaint = Paint()..color = const Color(0xFF10151D);
     canvas.drawRRect(rect, bgPaint);
 
@@ -390,7 +441,11 @@ class _HeadingTapePainter extends CustomPainter {
       final isMajor = roundedTick % 10 == 0;
       final tickTop = isMajor ? 8.0 : 14.0;
       final tickBottom = isMajor ? 24.0 : 22.0;
-      canvas.drawLine(Offset(x, tickTop), Offset(x, tickBottom), isMajor ? majorPaint : minorPaint);
+      canvas.drawLine(
+        Offset(x, tickTop),
+        Offset(x, tickBottom),
+        isMajor ? majorPaint : minorPaint,
+      );
 
       if (roundedTick % 30 == 0) {
         final value = _wrapHeading(tickHeading);
@@ -398,7 +453,11 @@ class _HeadingTapePainter extends CustomPainter {
         final tp = TextPainter(
           text: TextSpan(
             text: label,
-            style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700),
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+            ),
           ),
           textDirection: TextDirection.ltr,
         )..layout();
@@ -413,17 +472,34 @@ class _HeadingTapePainter extends CustomPainter {
       ..close();
     canvas.drawPath(pointerPath, Paint()..color = Colors.amber.shade700);
 
-    final boxRect = RRect.fromRectAndRadius(Rect.fromCenter(center: Offset(centerX, centerY + 4), width: 56, height: 20), const Radius.circular(5));
+    final boxRect = RRect.fromRectAndRadius(
+      Rect.fromCenter(
+        center: Offset(centerX, centerY + 4),
+        width: 56,
+        height: 20,
+      ),
+      const Radius.circular(5),
+    );
     canvas.drawRRect(boxRect, Paint()..color = const Color(0xFF1B2430));
 
     final headingText = TextPainter(
       text: TextSpan(
         text: _formatHeading(headingDeg),
-        style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w800),
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 11,
+          fontWeight: FontWeight.w800,
+        ),
       ),
       textDirection: TextDirection.ltr,
     )..layout();
-    headingText.paint(canvas, Offset(centerX - headingText.width / 2, centerY - headingText.height / 2 + 4));
+    headingText.paint(
+      canvas,
+      Offset(
+        centerX - headingText.width / 2,
+        centerY - headingText.height / 2 + 4,
+      ),
+    );
   }
 
   @override
@@ -443,7 +519,8 @@ class _AttitudePainter extends CustomPainter {
     final center = Offset(size.width / 2, size.height / 2);
     final radius = math.min(size.width, size.height) / 2;
 
-    final clipPath = Path()..addOval(Rect.fromCircle(center: center, radius: radius));
+    final clipPath = Path()
+      ..addOval(Rect.fromCircle(center: center, radius: radius));
     canvas.save();
     canvas.clipPath(clipPath);
 
@@ -457,7 +534,12 @@ class _AttitudePainter extends CustomPainter {
     final groundPaint = Paint()..color = const Color(0xFF8D6E63);
 
     canvas.drawRect(
-      Rect.fromLTWH(-radius * 2, -radius * 2 + pitchOffset, radius * 4, radius * 2),
+      Rect.fromLTWH(
+        -radius * 2,
+        -radius * 2 + pitchOffset,
+        radius * 4,
+        radius * 2,
+      ),
       skyPaint,
     );
     canvas.drawRect(
@@ -468,7 +550,11 @@ class _AttitudePainter extends CustomPainter {
     final horizonPaint = Paint()
       ..color = Colors.white
       ..strokeWidth = 3.0;
-    canvas.drawLine(Offset(-radius * 1.6, pitchOffset), Offset(radius * 1.6, pitchOffset), horizonPaint);
+    canvas.drawLine(
+      Offset(-radius * 1.6, pitchOffset),
+      Offset(radius * 1.6, pitchOffset),
+      horizonPaint,
+    );
 
     final ladderPaint = Paint()
       ..color = Colors.white.withValues(alpha: 0.8)
@@ -489,13 +575,19 @@ class _AttitudePainter extends CustomPainter {
         text: TextSpan(text: label, style: labelStyle),
         textDirection: TextDirection.ltr,
       )..layout();
-      leftLabel.paint(canvas, Offset(-halfWidth - leftLabel.width - 6, y - leftLabel.height / 2));
+      leftLabel.paint(
+        canvas,
+        Offset(-halfWidth - leftLabel.width - 6, y - leftLabel.height / 2),
+      );
 
       final rightLabel = TextPainter(
         text: TextSpan(text: label, style: labelStyle),
         textDirection: TextDirection.ltr,
       )..layout();
-      rightLabel.paint(canvas, Offset(halfWidth + 6, y - rightLabel.height / 2));
+      rightLabel.paint(
+        canvas,
+        Offset(halfWidth + 6, y - rightLabel.height / 2),
+      );
     }
 
     canvas.restore();
@@ -510,8 +602,16 @@ class _AttitudePainter extends CustomPainter {
       ..color = Colors.amber.shade700
       ..strokeWidth = 4
       ..strokeCap = StrokeCap.round;
-    canvas.drawLine(Offset(center.dx - radius * 0.26, center.dy), Offset(center.dx + radius * 0.26, center.dy), aircraftPaint);
-    canvas.drawLine(Offset(center.dx, center.dy), Offset(center.dx, center.dy + radius * 0.10), aircraftPaint);
+    canvas.drawLine(
+      Offset(center.dx - radius * 0.26, center.dy),
+      Offset(center.dx + radius * 0.26, center.dy),
+      aircraftPaint,
+    );
+    canvas.drawLine(
+      Offset(center.dx, center.dy),
+      Offset(center.dx, center.dy + radius * 0.10),
+      aircraftPaint,
+    );
     canvas.drawCircle(center, 4, aircraftPaint);
 
     final bankTickPaint = Paint()
@@ -519,8 +619,14 @@ class _AttitudePainter extends CustomPainter {
       ..strokeWidth = 2.0;
     for (final tick in const [0, 30, 60, -30, -60]) {
       final rad = tick * math.pi / 180.0;
-      final outer = Offset(center.dx + math.sin(rad) * (radius - 8), center.dy - math.cos(rad) * (radius - 8));
-      final inner = Offset(center.dx + math.sin(rad) * (radius - 18), center.dy - math.cos(rad) * (radius - 18));
+      final outer = Offset(
+        center.dx + math.sin(rad) * (radius - 8),
+        center.dy - math.cos(rad) * (radius - 8),
+      );
+      final inner = Offset(
+        center.dx + math.sin(rad) * (radius - 18),
+        center.dy - math.cos(rad) * (radius - 18),
+      );
       canvas.drawLine(inner, outer, bankTickPaint);
 
       if (tick != 0) {
@@ -540,7 +646,13 @@ class _AttitudePainter extends CustomPainter {
           ),
           textDirection: TextDirection.ltr,
         )..layout();
-        labelPainter.paint(canvas, Offset(labelPos.dx - labelPainter.width / 2, labelPos.dy - labelPainter.height / 2));
+        labelPainter.paint(
+          canvas,
+          Offset(
+            labelPos.dx - labelPainter.width / 2,
+            labelPos.dy - labelPainter.height / 2,
+          ),
+        );
       }
     }
 
@@ -552,7 +664,10 @@ class _AttitudePainter extends CustomPainter {
     final tangent = Offset(math.cos(rollRad), math.sin(rollRad));
     final radial = Offset(math.sin(rollRad), -math.cos(rollRad));
     final movingPointer = Path()
-      ..moveTo(pointerCenter.dx + radial.dx * 2, pointerCenter.dy + radial.dy * 2)
+      ..moveTo(
+        pointerCenter.dx + radial.dx * 2,
+        pointerCenter.dy + radial.dy * 2,
+      )
       ..lineTo(
         pointerCenter.dx - radial.dx * 8 + tangent.dx * 6,
         pointerCenter.dy - radial.dy * 8 + tangent.dy * 6,
@@ -562,10 +677,7 @@ class _AttitudePainter extends CustomPainter {
         pointerCenter.dy - radial.dy * 8 - tangent.dy * 6,
       )
       ..close();
-    canvas.drawPath(
-      movingPointer,
-      Paint()..color = Colors.white,
-    );
+    canvas.drawPath(movingPointer, Paint()..color = Colors.white);
 
     final pointerPath = Path()
       ..moveTo(center.dx, center.dy - radius + 7)
@@ -623,12 +735,20 @@ class HeatmapScreen extends StatelessWidget {
             padding: const EdgeInsets.all(8.0),
             child: Row(
               children: [
-                ElevatedButton.icon(onPressed: () => _downloadMap(context), icon: const Icon(Icons.download), label: const Text('Download Map')),
+                ElevatedButton.icon(
+                  onPressed: () => _downloadMap(context),
+                  icon: const Icon(Icons.download),
+                  label: const Text('Download Map'),
+                ),
                 const SizedBox(width: 12),
-                ElevatedButton.icon(onPressed: () => Navigator.of(context).pop(), icon: const Icon(Icons.close), label: const Text('Close')),
+                ElevatedButton.icon(
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: const Icon(Icons.close),
+                  label: const Text('Close'),
+                ),
               ],
             ),
-          )
+          ),
         ],
       ),
     );
@@ -642,13 +762,24 @@ class HeatmapScreen extends StatelessWidget {
       for (var c = 0; c < map[r].length; c++) {
         final cell = map[r][c];
         if (cell.visits == 0) continue;
-        rows.add('$r,$c,${cell.visits},${cell.minPressure.toStringAsFixed(1)},${cell.maxPressure.toStringAsFixed(1)}');
+        rows.add(
+          '$r,$c,${cell.visits},${cell.minPressure.toStringAsFixed(1)},${cell.maxPressure.toStringAsFixed(1)}',
+        );
       }
     }
     final csv = rows.join('\n');
     showDialog(
       context: context,
-      builder: (_) => AlertDialog(title: const Text('Map CSV (copy)'), content: SingleChildScrollView(child: SelectableText(csv)), actions: [TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Close'))]),
+      builder: (_) => AlertDialog(
+        title: const Text('Map CSV (copy)'),
+        content: SingleChildScrollView(child: SelectableText(csv)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -660,18 +791,18 @@ class HeatmapView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(builder: (_, constraints) {
-      final size = math.min(constraints.maxWidth, constraints.maxHeight);
-      return Center(
-        child: SizedBox(
-          width: size,
-          height: size,
-          child: CustomPaint(
-            painter: _HeatmapPainter(map),
+    return LayoutBuilder(
+      builder: (_, constraints) {
+        final size = math.min(constraints.maxWidth, constraints.maxHeight);
+        return Center(
+          child: SizedBox(
+            width: size,
+            height: size,
+            child: CustomPaint(painter: _HeatmapPainter(map)),
           ),
-        ),
-      );
-    });
+        );
+      },
+    );
   }
 }
 
@@ -692,7 +823,10 @@ class _HeatmapPainter extends CustomPainter {
         final cell = map[r][c];
         final intensity = (cell.visits / 10).clamp(0.0, 1.0);
         paint.color = Color.lerp(Colors.white, Colors.red, intensity)!;
-        canvas.drawRect(Rect.fromLTWH(c * cellW, r * cellH, cellW, cellH), paint);
+        canvas.drawRect(
+          Rect.fromLTWH(c * cellW, r * cellH, cellW, cellH),
+          paint,
+        );
       }
     }
   }
@@ -706,7 +840,11 @@ class MapCell {
   double minPressure;
   double maxPressure;
 
-  MapCell({this.visits = 0, this.minPressure = double.infinity, this.maxPressure = 0});
+  MapCell({
+    this.visits = 0,
+    this.minPressure = double.infinity,
+    this.maxPressure = 0,
+  });
 }
 
 // --- Mock telemetry service and models ---
@@ -718,5 +856,11 @@ class TelemetryData {
   final double oilPressure; // psi
   final double oilTemp; // C
 
-  TelemetryData({required this.ts, required this.rollDeg, required this.pitchDeg, required this.oilPressure, required this.oilTemp});
+  TelemetryData({
+    required this.ts,
+    required this.rollDeg,
+    required this.pitchDeg,
+    required this.oilPressure,
+    required this.oilTemp,
+  });
 }

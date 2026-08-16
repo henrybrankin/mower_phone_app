@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 
@@ -17,7 +18,57 @@ class MowerBleService {
 
   MowerBleService({this.deviceName = 'MowerXiao'});
 
+  String get platformName {
+    if (Platform.isIOS) return 'iPhone';
+    if (Platform.isWindows) return 'Windows';
+    return Platform.operatingSystem;
+  }
+
+  Future<void> _ensureBluetoothReady() async {
+    if (!Platform.isIOS && !Platform.isWindows) {
+      throw UnsupportedError(
+        'Mower BLE is currently supported on Windows and iPhone only',
+      );
+    }
+
+    if (!await FlutterBluePlus.isSupported) {
+      throw StateError(
+        'Bluetooth LE is not supported on this $platformName device',
+      );
+    }
+
+    var state = FlutterBluePlus.adapterStateNow;
+    if (state == BluetoothAdapterState.unknown) {
+      state = await FlutterBluePlus.adapterState
+          .where((value) => value != BluetoothAdapterState.unknown)
+          .first
+          .timeout(
+            const Duration(seconds: 10),
+            onTimeout: () => BluetoothAdapterState.unknown,
+          );
+    }
+
+    switch (state) {
+      case BluetoothAdapterState.on:
+        return;
+      case BluetoothAdapterState.unauthorized:
+        throw StateError(
+          'Bluetooth access is not authorized. Enable it for Mower Phone in '
+          '${Platform.isIOS ? 'iPhone Settings' : 'Windows Settings'}.',
+        );
+      case BluetoothAdapterState.off:
+        throw StateError(
+          'Bluetooth is turned off on this $platformName device',
+        );
+      default:
+        throw StateError(
+          'Bluetooth is not ready on this $platformName device ($state)',
+        );
+    }
+  }
+
   Future<ScanResult> startScan() async {
+    await _ensureBluetoothReady();
     await stopScan();
     _device = null;
     final completer = Completer<ScanResult>();
@@ -27,7 +78,8 @@ class MowerBleService {
         for (final result in results) {
           final advName = result.advertisementData.advName;
           final serviceUuids = result.advertisementData.serviceUuids;
-          if (advName == deviceName || serviceUuids.contains(_mowerServiceUuid)) {
+          if (advName == deviceName ||
+              serviceUuids.contains(_mowerServiceUuid)) {
             if (_device == null) {
               _device = result.device;
               completer.complete(result);
@@ -45,7 +97,9 @@ class MowerBleService {
 
     final scanTimer = Timer(const Duration(seconds: 15), () {
       if (!completer.isCompleted) {
-        completer.completeError(StateError('Scan timed out without finding mower'));
+        completer.completeError(
+          StateError('Scan timed out without finding mower'),
+        );
       }
     });
 
@@ -125,12 +179,16 @@ class MowerBleService {
   }
 
   Stream<List<int>> subscribeTelemetry() {
-    if (_telemetryChar == null) throw StateError('Telemetry characteristic not found');
+    if (_telemetryChar == null) {
+      throw StateError('Telemetry characteristic not found');
+    }
     return _telemetryChar!.onValueReceived;
   }
 
   Future<void> sendZeroCommand() async {
-    if (_controlChar == null) throw StateError('Control characteristic not found');
+    if (_controlChar == null) {
+      throw StateError('Control characteristic not found');
+    }
     await _controlChar!.write([0x01], withoutResponse: false);
   }
 

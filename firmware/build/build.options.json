@@ -1,9 +1,0 @@
-{
-  "additionalFiles": "..\\..,..\\..\\..,..\\..\\..,..\\..\\..,..\\..\\..,..\\..\\..,..\\..\\..,..\\..\\..,..\\..\\..,..\\..\\..,..\\..\\..,..\\..\\..,..\\..\\..,..\\..\\..,..\\..\\..,..\\..\\..,..\\..\\..,..\\..\\..,..\\..\\..,..\\..\\..",
-  "compiler.optimization_flags": "",
-  "customBuildProperties": "",
-  "fqbn": "arduino:mbed_nano:nano33ble",
-  "hardwareFolders": "C:\\Users\\henry\\AppData\\Local\\Arduino15\\packages\\arduino\\hardware\\mbed_nano\\4.6.0,C:\\Users\\henry\\AppData\\Local\\Arduino15\\packages\\arduino\\hardware\\mbed_nano\\4.6.0",
-  "otherLibrariesFolders": "C:\\Users\\henry\\Documents\\Arduino\\libraries",
-  "sketchLocation": "C:\\src\\mower_phone_app\\firmware\\mower_mcu"
-}
