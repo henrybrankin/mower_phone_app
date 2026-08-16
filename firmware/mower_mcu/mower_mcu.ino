@@ -25,6 +25,18 @@ const unsigned long kUpdateIntervalMs = 20;
 const float kComplementaryAlpha = 0.95f;
 const float kHeadingAlpha = 0.2f;
 
+static void haltWithBlinkCode(uint8_t blinkCount) {
+  for (;;) {
+    for (uint8_t i = 0; i < blinkCount; ++i) {
+      digitalWrite(LED_BUILTIN, HIGH);
+      delay(150);
+      digitalWrite(LED_BUILTIN, LOW);
+      delay(150);
+    }
+    delay(900);
+  }
+}
+
 static uint8_t headingToByte(float headingDeg) {
   float wrapped = fmodf(headingDeg, 360.0f);
   if (wrapped < 0.0f) {
@@ -69,19 +81,21 @@ BLECharacteristic controlChar(CONTROL_CHAR_UUID, BLEWrite, 1);
 BLEStringCharacteristic versionChar(VERSION_CHAR_UUID, BLERead, 16);
 
 void setup() {
+  pinMode(LED_BUILTIN, OUTPUT);
+  digitalWrite(LED_BUILTIN, LOW);
   Serial.begin(115200);
 
   Wire.begin();
   IMU.debug(Serial);
   if (!IMU.begin()) {
     Serial.println("IMU init failed");
-    while (1);
+    haltWithBlinkCode(2);
   }
   Serial.println("IMU initialized");
 
   if (!BLE.begin()) {
     Serial.println("BLE init failed");
-    while (1);
+    haltWithBlinkCode(3);
   }
 
   BLE.setLocalName("MowerXiao");
@@ -102,6 +116,7 @@ void setup() {
   });
 
   BLE.advertise();
+  digitalWrite(LED_BUILTIN, HIGH);
   Serial.println("Advertising started");
 }
 

@@ -1,82 +1,166 @@
 # BLE firmware update design
 
+## Status
+
+The two-stage boot architecture has been proven on a spare Arduino Nano 33 BLE
+Sense Rev2:
+
+1. The stock Arduino SAM-BA bootloader remains installed and provides USB
+   recovery.
+2. MCUboot runs as a second-stage manager at `0x10000`.
+3. MCUboot validates an image in the primary slot and starts it at `0x20000`.
+4. A relocated Zephyr LED test ran successfully.
+5. The relocated Arduino mower firmware starts normally, advertises over BLE,
+   reports firmware version `0.1.0`, and communicates with the Flutter app.
+6. The normal Arduino USB serial interface returns as COM3 after startup.
+
+The BLE image-transfer service, swap request, confirmation, and rollback tests
+have not yet been implemented.
+
 ## Objective
 
 Allow the Flutter app to update mower firmware over BLE while retaining the
-stock Arduino SAM-BA bootloader for USB recovery and preventing the running
-application from overwriting itself.
+stock Arduino SAM-BA bootloader for USB recovery. The running application must
+write only to a secondary slot and must never overwrite itself or MCUboot.
 
-## Verified current layout
+## Verified flash layout
 
-These values were measured from Arduino mbed core 4.6.0 and the built ELF/HEX
-files for the Nano 33 BLE Sense Rev2:
+All boundaries are aligned to the nRF52840's 4 KiB erase pages.
 
-| Region | Address range | Notes |
-| --- | --- | --- |
-| SAM-BA bootloader | `0x00000`–`0x08BB7` | 35,768 bytes currently occupied |
-| Reserved boot area | `0x00000`–`0x0FFFF` | Arduino application begins after 64 KiB |
-| Current application | `0x10000`–approximately `0x68A00` | 362,944-byte binary |
-| Physical flash | `0x00000`–`0xFFFFF` | 1 MiB total |
+| Region | Address range | Size | Purpose |
+| --- | --- | ---: | --- |
+| Stock SAM-BA bootloader | `0x00000`-`0x0FFFF` | 64 KiB | Arduino USB recovery; currently about 35,768 bytes occupied |
+| MCUboot second stage | `0x10000`-`0x1FFFF` | 64 KiB | Image validation, swap, trial boot, and rollback |
+| Primary mower image | `0x20000`-`0x8DFFF` | 440 KiB | Active MCUboot-format application |
+| Secondary update image | `0x8E000`-`0xFBFFF` | 440 KiB | Inactive image received over BLE |
+| Swap scratch/status | `0xFC000`-`0xFFFFF` | 16 KiB | Power-failure-safe scratch and persistent swap state |
 
-The standard Arduino linker configuration is:
+The MCUboot prototype occupies 24,296 bytes of its 64 KiB region. The current
+Arduino mower payload is about 363 KiB including its MCUboot header and hash,
+leaving roughly 77 KiB in each 440 KiB slot. Image size must be monitored as
+features are added.
+
+## Application placement
+
+The standard Arduino mbed core 4.6.0 application layout is:
 
 ```text
 FLASH ORIGIN = 0x10000
 FLASH LENGTH = 0xF0000
 ```
 
-## Provisional OTA layout
+For MCUboot, the raw Arduino payload is linked as:
 
-All boundaries are aligned to the nRF52840's 4 KiB flash erase pages.
+```text
+FLASH ORIGIN = 0x20200
+FLASH LENGTH = 0x6DE00
+MBED_APP_START = 0x20200
+MBED_APP_SIZE = 0x6DE00
+```
 
-| Region | Address range | Size |
-| --- | --- | --- |
-| Stock SAM-BA bootloader | `0x00000`–`0x0FFFF` | 64 KiB reserved |
-| Second-stage image manager | `0x10000`–`0x1FFFF` | 64 KiB |
-| Primary mower application | `0x20000`–`0x8DFFF` | 440 KiB |
-| Secondary update slot | `0x8E000`–`0xFBFFF` | 440 KiB |
-| Swap scratch and status | `0xFC000`–`0xFFFFF` | 16 KiB |
+The first `0x200` bytes of the primary slot are reserved for the MCUboot image
+header. MCUboot therefore finds the image at `0x20000` and hands control to the
+Arduino vector table at `0x20200`.
 
-The current application occupies about 354 KiB, leaving approximately 86 KiB
-of growth space in each application slot. Image size must be monitored as oil
-pressure, temperature, RPM, logging, and safety features are added.
+The project-owned files in `firmware/ota/arduino/` relocate the Arduino linker
+layout without modifying the installed Arduino core.
 
-## Boot and update sequence
+## Arduino-compatible MCUboot handoff
 
-1. The stock SAM-BA bootloader starts after reset.
-2. In USB recovery mode it accepts a combined recovery image.
-3. During normal boot it starts the second-stage manager at `0x10000`.
-4. The manager validates the primary image and starts it at `0x20000`.
-5. The running mower application receives a signed image over BLE and writes
-   only to the secondary slot.
-6. After the transfer, it verifies the image hash and records an update-pending
-   flag before resetting.
-7. The manager performs a power-failure-safe swap using scratch pages and a
-   persistent progress journal.
-8. The new application boots in trial mode and must confirm itself.
-9. If confirmation does not occur, the manager rolls back to the old image.
+MCUboot normally chain-loads an application with the Cortex-M global interrupt
+mask (`PRIMASK`) set. Zephyr startup clears that mask, but the prebuilt Arduino
+mbed RTOS startup assumes reset-state interrupts are already enabled. Without a
+compatibility handoff, USB, BLE, and `setup()` never start.
 
-## USB recovery consequence
+The patch in `firmware/ota/mcuboot/arduino-mbed-handoff.patch` restores the
+reset-state interrupt mask immediately before MCUboot calls the Arduino reset
+handler. This was hardware-tested: without it the diagnostic LED remained off;
+with it USB returned on COM3 and Flutter connected over BLE.
 
-The normal Arduino upload image begins at `0x10000`. With this layout, an
-ordinary upload would overwrite the second-stage manager. USB recovery must
-therefore upload a combined artifact containing both the manager and the mower
-application, or use a custom upload workflow that protects the manager.
+The patch must be applied to the selected MCUboot source before building the
+second stage. It is deliberately stored in the repository because the Zephyr
+workspace under `.tools/` is ignored.
 
-## Safety rules
+## Two distributable image types
 
-- Do not change the working board's boot or linker configuration until a
-  second Nano or an SWD recovery probe is available.
-- Never erase or program the active application slot from the application.
-- Verify board identity, image length, SHA-256 hash, and digital signature.
-- Reject updates while the engine is running or supply voltage is unsafe.
+### USB/SAM-BA recovery image
+
+Example name: `mower-recovery-v0.2.0.bin`
+
+Contains MCUboot at relative offset zero followed by a padded gap and the
+MCUboot-format mower image at relative offset `0x10000`. SAM-BA maps the file's
+start to physical address `0x10000`, producing:
+
+```text
+physical 0x10000: MCUboot
+physical 0x20000: mower image header and application
+```
+
+Use this image for initial installation and wired recovery. It does not contain
+the stock SAM-BA bootloader below physical `0x10000`.
+
+### BLE update image
+
+Example name: `mower-update-v0.2.0.bin`
+
+Contains only the MCUboot-format mower application: header, payload, hash, and
+eventually a digital signature. Flutter sends this file to the running mower,
+which writes it to the secondary slot at `0x8E000`. It does not contain SAM-BA
+or MCUboot.
+
+Initially the latest BLE update image will be embedded as a Flutter asset. A
+later version may download signed images from a release server without changing
+the verification model.
+
+## Intended BLE update sequence
+
+1. The About & Diagnostics screen shows the connected mower version and the
+   bundled update version.
+2. Flutter enables **Update mower firmware** only when the board is compatible,
+   the mower is safely inactive, supply voltage is acceptable, and no update is
+   already running.
+3. Flutter transfers the bundled update image in chunks over BLE.
+4. The running mower writes only to the secondary slot at `0x8E000` and reports
+   progress.
+5. The mower verifies image length, board identity, version, SHA-256 hash, and
+   digital signature before marking it pending.
+6. The mower restarts. MCUboot performs a power-failure-safe swap using the
+   scratch area.
+7. The new image boots in trial mode, performs health checks, and confirms
+   itself.
+8. If it does not confirm, MCUboot restores the previous image on a subsequent
+   restart.
+9. Flutter reconnects and verifies the newly reported firmware version.
+
+## Current LED diagnostics
+
+The Arduino mower sketch uses the yellow `LED_BUILTIN` during startup:
+
+- Solid yellow: BLE advertising started successfully.
+- Repeating two-blink pattern: IMU initialization failed.
+- Repeating three-blink pattern: BLE initialization failed.
+- Off: execution did not reach Arduino `setup()`.
+
+The earlier Zephyr handoff test used Zephyr's `led0` alias, which illuminated
+the red LED rather than Arduino's yellow built-in LED.
+
+## Safety and recovery rules
+
+- Never erase or program the primary slot from the running application.
+- Reject images that exceed the slot or target a different board/layout.
+- Require a valid digital signature before allowing an update or boot.
+- Reject updates while the engine or control outputs are active.
 - Make every swap step resumable after arbitrary power loss.
-- Preserve a tested USB or SWD recovery path.
+- Preserve and test the SAM-BA USB recovery path after boot-manager changes.
+- An ordinary Arduino upload starts at physical `0x10000` and overwrites
+  MCUboot. Use a combined recovery image once this layout is installed.
 
-## Next prototype steps
+## Next milestones
 
-1. Select and build a second-stage manager, preferably based on MCUboot.
-2. Link a trivial test application at `0x20000` without flashing it.
-3. Produce a combined SAM-BA recovery image.
-4. Verify the complete boot chain on a spare Nano or with an SWD probe ready.
-5. Test interrupted swaps and rollback before implementing BLE transfer.
+1. Turn the manual build steps into a repeatable script that produces both
+   versioned image types.
+2. Add production signing keys and enable signature enforcement in MCUboot.
+3. Add a BLE update service that can erase and write only the secondary slot.
+4. Add the update controls and progress display to About & Diagnostics.
+5. Test interrupted transfers, interrupted swaps, trial confirmation, rollback,
+   incompatible images, corrupt images, and low-voltage rejection.

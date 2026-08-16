@@ -1,0 +1,15 @@
+--- a/boot/zephyr/main.c
++++ b/boot/zephyr/main.c
+@@ -252,6 +252,12 @@ static void do_boot(struct boot_rsp *rsp)
+         : "r0", "r1", "r2", "r3", "memory"
+     );
+ #else
++    /* Arduino mbed startup expects the reset-state global interrupt mask.
++     * Zephyr startup clears PRIMASK itself, but Arduino's RTOS startup does
++     * not and otherwise never reaches setup().
++     */
++    __enable_irq();
++    __ISB();
+     ((void (*)(void))vt->reset)();
+ #endif
+ }
