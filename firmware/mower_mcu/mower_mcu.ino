@@ -8,6 +8,9 @@
 #define MOWER_SERVICE_UUID        "12345678-1234-5678-1234-56789abcdef0"
 #define TELEMETRY_CHAR_UUID       "12345678-1234-5678-1234-56789abcdef1"
 #define CONTROL_CHAR_UUID         "12345678-1234-5678-1234-56789abcdef2"
+#define VERSION_CHAR_UUID         "12345678-1234-5678-1234-56789abcdef3"
+
+const char kFirmwareVersion[] = "0.1.0";
 
 bool g_isConnected = false;
 bool g_zeroCommandReceived = false;
@@ -63,6 +66,7 @@ static void updateHeadingFromMag(float mx, float my, float mz, float rollDeg, fl
 BLEService mowerService(MOWER_SERVICE_UUID);
 BLECharacteristic telemetryChar(TELEMETRY_CHAR_UUID, BLERead | BLENotify, 4);
 BLECharacteristic controlChar(CONTROL_CHAR_UUID, BLEWrite, 1);
+BLEStringCharacteristic versionChar(VERSION_CHAR_UUID, BLERead, 16);
 
 void setup() {
   Serial.begin(115200);
@@ -85,7 +89,10 @@ void setup() {
 
   mowerService.addCharacteristic(telemetryChar);
   mowerService.addCharacteristic(controlChar);
+  mowerService.addCharacteristic(versionChar);
   BLE.addService(mowerService);
+
+  versionChar.writeValue(kFirmwareVersion);
 
   controlChar.setEventHandler(BLEWritten, [](BLEDevice central, BLECharacteristic characteristic) {
     if (controlChar.valueLength() > 0 && controlChar.value()[0] == 0x01) {

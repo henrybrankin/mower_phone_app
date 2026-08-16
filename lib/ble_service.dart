@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
@@ -6,6 +7,7 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 final _mowerServiceUuid = Guid('12345678-1234-5678-1234-56789abcdef0');
 final _telemetryCharUuid = Guid('12345678-1234-5678-1234-56789abcdef1');
 final _controlCharUuid = Guid('12345678-1234-5678-1234-56789abcdef2');
+final _versionCharUuid = Guid('12345678-1234-5678-1234-56789abcdef3');
 
 class MowerBleService {
   final String deviceName;
@@ -13,6 +15,7 @@ class MowerBleService {
   BluetoothDevice? _device;
   BluetoothCharacteristic? _telemetryChar;
   BluetoothCharacteristic? _controlChar;
+  BluetoothCharacteristic? _versionChar;
   StreamSubscription<List<ScanResult>>? _scanSub;
   StreamSubscription<BluetoothConnectionState>? _connSub;
 
@@ -141,6 +144,7 @@ class MowerBleService {
       if (state == BluetoothConnectionState.disconnected) {
         _telemetryChar = null;
         _controlChar = null;
+        _versionChar = null;
       }
     });
 
@@ -153,6 +157,9 @@ class MowerBleService {
           }
           if (characteristic.uuid == _controlCharUuid) {
             _controlChar = characteristic;
+          }
+          if (characteristic.uuid == _versionCharUuid) {
+            _versionChar = characteristic;
           }
         }
       }
@@ -175,7 +182,17 @@ class MowerBleService {
 
     _telemetryChar = null;
     _controlChar = null;
+    _versionChar = null;
     _device = null;
+  }
+
+  Future<String?> readFirmwareVersion() async {
+    final characteristic = _versionChar;
+    if (characteristic == null) return null;
+
+    final bytes = await characteristic.read();
+    final version = utf8.decode(bytes, allowMalformed: true).trim();
+    return version.isEmpty ? null : version;
   }
 
   Stream<List<int>> subscribeTelemetry() {

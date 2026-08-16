@@ -5,6 +5,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:window_size/window_size.dart';
 
+import 'about_diagnostics_screen.dart';
 import 'ble_service.dart';
 
 void main() {
@@ -49,6 +50,7 @@ class _HomeScreenState extends State<HomeScreen> {
   StreamSubscription<List<int>>? _bleSub;
   TelemetryData? _last;
   bool _connected = false;
+  String? _firmwareVersion;
   String _status = 'Disconnected';
 
   @override
@@ -64,7 +66,11 @@ class _HomeScreenState extends State<HomeScreen> {
       final device = await _bleService.startScan();
       setState(() => _status = 'Found ${device.advertisementData.advName}');
       await _bleService.connectAndDiscover();
-      setState(() => _status = 'Connected');
+      final firmwareVersion = await _bleService.readFirmwareVersion();
+      setState(() {
+        _firmwareVersion = firmwareVersion;
+        _status = 'Connected';
+      });
       _bleSub = _bleService.subscribeTelemetry().listen(
         _onTelemetryReceived,
         onError: (error) {
@@ -85,6 +91,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _connected = false;
       _status = 'Disconnected';
       _last = null;
+      _firmwareVersion = null;
     });
   }
 
@@ -138,6 +145,17 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  void _openAboutDiagnostics() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => AboutDiagnosticsScreen(
+          mowerConnected: _connected,
+          mowerFirmwareVersion: _firmwareVersion,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -150,6 +168,11 @@ class _HomeScreenState extends State<HomeScreen> {
             icon: const Icon(Icons.map),
             tooltip: 'Open failure heatmap',
           ),
+          IconButton(
+            onPressed: _openAboutDiagnostics,
+            icon: const Icon(Icons.info_outline),
+            tooltip: 'About and diagnostics',
+          ),
         ],
       ),
       body: Center(
@@ -159,7 +182,10 @@ class _HomeScreenState extends State<HomeScreen> {
             padding: const EdgeInsets.all(12),
             child: Column(
               children: [
-                StatusPanel(last: _last),
+                StatusPanel(
+                  connected: _connected,
+                  firmwareVersion: _firmwareVersion,
+                ),
                 const SizedBox(height: 8),
                 Wrap(
                   alignment: WrapAlignment.center,
@@ -213,13 +239,13 @@ class _HomeScreenState extends State<HomeScreen> {
 }
 
 class StatusPanel extends StatelessWidget {
-  final TelemetryData? last;
+  final bool connected;
+  final String? firmwareVersion;
 
-  const StatusPanel({super.key, this.last});
+  const StatusPanel({super.key, required this.connected, this.firmwareVersion});
 
   @override
   Widget build(BuildContext context) {
-    final connected = last != null;
     return Material(
       elevation: 4,
       borderRadius: BorderRadius.circular(12),
@@ -233,77 +259,36 @@ class StatusPanel extends StatelessWidget {
             end: Alignment.bottomRight,
           ),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        child: Row(
           children: [
-            Row(
+            const Icon(Icons.grass, size: 48, color: Colors.white),
+            const SizedBox(width: 12),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Icon(Icons.grass, size: 48, color: Colors.white),
-                const SizedBox(width: 12),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Mower',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      connected ? 'Connected' : 'Disconnected',
-                      style: const TextStyle(color: Colors.white70),
-                    ),
-                  ],
+                const Text(
+                  'Mower',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                _smallStat(
-                  'Heading',
-                  last != null ? _formatHeading(last!.oilPressure) : '—',
+                const SizedBox(height: 6),
+                Text(
+                  connected ? 'Connected' : 'Disconnected',
+                  style: const TextStyle(color: Colors.white70),
                 ),
-                _smallStat(
-                  'Gyro Z',
-                  last != null ? _formatSigned(last!.oilTemp) : '—',
-                ),
-                _smallStat(
-                  'Roll',
-                  last != null ? _formatSigned(last!.rollDeg) : '—',
-                ),
-                _smallStat(
-                  'Pitch',
-                  last != null ? _formatSigned(last!.pitchDeg) : '—',
+                const SizedBox(height: 2),
+                Text(
+                  'Firmware: ${firmwareVersion ?? 'Unknown'}',
+                  style: const TextStyle(color: Colors.white70, fontSize: 12),
                 ),
               ],
             ),
           ],
         ),
       ),
-    );
-  }
-
-  Widget _smallStat(String label, String value) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: const TextStyle(color: Colors.white70, fontSize: 12),
-        ),
-        Text(
-          value,
-          style: const TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-      ],
     );
   }
 }
