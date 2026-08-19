@@ -66,6 +66,9 @@ sizes and the MCUboot image, and writes these files under
 - `mower-ota-manifest.json`: version, target, sizes, destinations, and SHA-256
   hashes.
 
+It also copies `mower-update.bin` and the manifest into `assets/firmware/` so
+the same verified update is bundled into subsequent Flutter builds.
+
 An optional output directory can be supplied with `-OutputDirectory`. An
 optional `-Version` is accepted only when it matches the version compiled into
 the sketch.
@@ -91,3 +94,23 @@ The same screen has a separately confirmed secondary-slot flash test. It
 erases only the first 4 KiB sector at `0x8E000`, writes the 1 KiB test payload,
 and verifies flash readback CRC-32. It does not mark an update pending or
 reboot, but it does destroy any previously staged secondary image.
+
+Transfer fragments adapt to the negotiated BLE MTU, up to 240 payload bytes,
+use write-without-response for data, and receive cumulative acknowledgements in
+roughly 256-byte windows. Diagnostics show the measured duration, throughput,
+MTU, and chosen payload size.
+
+The separately confirmed **Stage bundled firmware** action writes the complete
+embedded MCUboot image to the secondary slot with progressive sector erasure.
+The Arduino verifies both streaming and flash-readback CRC-32 and checks the
+MCUboot header and TLV. It deliberately does not mark the image pending, reboot,
+or activate it; activation is a later milestone. The full path was
+hardware-verified on Windows with the 366680-byte firmware 0.1.0 image in 641
+seconds (572 B/s).
+
+The current reliable transport also retries uncertain Windows writes, resumes
+from stable Arduino-reported offsets, repeats transfer credits, and throttles
+normal telemetry to 1 Hz during OTA to avoid BLE contention. Direct per-fragment
+flash programming is intentional: larger buffered FlashIAP operations caused
+ArduinoBLE disconnections in hardware tests. Normal 50 Hz telemetry resumes
+when the transfer ends.

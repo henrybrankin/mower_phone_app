@@ -1,6 +1,8 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import 'ble_service.dart';
@@ -63,9 +65,13 @@ class _AboutDiagnosticsScreenState extends State<AboutDiagnosticsScreen> {
       if (!mounted) return;
       setState(() {
         _otaTestProgress = 1;
+        final rate = result.bytesPerSecond;
         _otaTestResult =
             'Passed: ${result.bytesTransferred} bytes, CRC-32 '
-            '0x${result.crc32.toRadixString(16).padLeft(8, '0').toUpperCase()}';
+            '0x${result.crc32.toRadixString(16).padLeft(8, '0').toUpperCase()}, '
+            '${result.elapsed.inMilliseconds} ms, '
+            '${rate.toStringAsFixed(0)} B/s, MTU ${result.mtu}, '
+            '${result.payloadBytesPerChunk}-byte payloads';
       });
     } catch (error) {
       if (!mounted) return;
@@ -99,6 +105,91 @@ class _AboutDiagnosticsScreenState extends State<AboutDiagnosticsScreen> {
     );
     if (confirmed == true && mounted) {
       await _runOtaTest(writesFlash: true);
+    }
+  }
+
+  Future<void> _confirmAndStageFirmware() async {
+    final manifestText = await rootBundle.loadString(
+      'assets/firmware/mower-ota-manifest.json',
+    );
+    final manifest = jsonDecode(manifestText) as Map<String, dynamic>;
+    final update = manifest['update'] as Map<String, dynamic>;
+    final version = manifest['firmwareVersion'];
+    final size = update['size'];
+    if (!mounted) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Stage bundled firmware?'),
+        content: Text(
+          'This will erase MCUboot\'s secondary slot and write firmware '
+          '$version ($size bytes). On the current Windows BLE link it may '
+          'take about seven minutes. The image will be read back and verified, '
+          'but it will not be activated and the mower will not reboot.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Stage firmware'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final imageData = await rootBundle.load('assets/firmware/mower-update.bin');
+    final image = imageData.buffer.asUint8List(
+      imageData.offsetInBytes,
+      imageData.lengthInBytes,
+    );
+    if (image.length != size) {
+      setState(() {
+        _otaTestResult = 'Failed: bundled firmware does not match manifest';
+      });
+      return;
+    }
+
+    final bleService = widget.bleService;
+    if (bleService == null) return;
+    setState(() {
+      _otaTestRunning = true;
+      _otaTestProgress = 0;
+      _otaTestResult = 'Staging firmware $version...';
+    });
+    try {
+      final result = await bleService.stageOtaImage(
+        image,
+        onProgress: (progress) {
+          if (mounted) {
+            setState(() {
+              _otaTestProgress = progress;
+              _otaTestResult =
+                  'Staging firmware $version... '
+                  '${(progress * image.length).round()}/${image.length} bytes '
+                  '(${(progress * 100).toStringAsFixed(1)}%)';
+            });
+          }
+        },
+      );
+      if (!mounted) return;
+      setState(() {
+        _otaTestProgress = 1;
+        _otaTestResult =
+            'Staged and verified firmware $version: '
+            '${result.bytesTransferred} bytes in '
+            '${result.elapsed.inSeconds} s '
+            '(${result.bytesPerSecond.toStringAsFixed(0)} B/s). '
+            'The image has not been activated.';
+      });
+    } catch (error) {
+      if (mounted) setState(() => _otaTestResult = 'Failed: $error');
+    } finally {
+      if (mounted) setState(() => _otaTestRunning = false);
     }
   }
 
@@ -189,6 +280,20 @@ class _AboutDiagnosticsScreenState extends State<AboutDiagnosticsScreen> {
                   label: Text(
                     _otaTestRunning ? 'Testing...' : 'Run BLE transport test',
                   ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: OutlinedButton.icon(
+                  onPressed:
+                      widget.mowerConnected &&
+                          widget.bleService?.otaTransportAvailable == true &&
+                          !_otaTestRunning
+                      ? _confirmAndStageFirmware
+                      : null,
+                  icon: const Icon(Icons.system_update_alt),
+                  label: const Text('Stage bundled firmware'),
                 ),
               ),
               const SizedBox(height: 8),

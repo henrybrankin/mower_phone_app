@@ -175,11 +175,39 @@ four received-length bytes, and four expected-length bytes.
 
 The receiver accepts only the next exact byte offset, rejects chunks that
 would exceed the announced length, and currently limits test transfers to
-4096 bytes. Flutter sends a deterministic 1024-byte payload in 16-byte chunks,
-uses acknowledged writes, and reads status after every chunk. The About &
-Diagnostics screen reports progress and the validated CRC-32. This deliberately
-slow stop-and-confirm flow establishes correctness before adding flash writes
-or optimizing throughput.
+4096 bytes. Flutter sends a deterministic 1024-byte payload. The initial
+implementation used 16-byte acknowledged chunks and read status after every
+chunk, establishing correctness before flash writes or throughput work.
+
+The transport has since been upgraded to use write-without-response data
+fragments with bounded cumulative acknowledgements. Flutter reads the
+negotiated MTU and selects the
+largest four-byte-aligned payload that fits after the ATT and four-byte offset
+overheads, with a 240-byte ceiling. An MTU of 23 therefore retains 16-byte
+payloads, while a sufficiently large negotiated MTU permits up to 240 bytes.
+ArduinoBLE's data characteristic accepts 244 bytes including the offset.
+
+Status is now published and read at approximately 256-byte windows and at the
+end of a transfer, rather than after every chunk. Start and finish controls
+still use acknowledged writes. Strict offset checking, cumulative byte counts,
+window acknowledgements, and final CRC detect missing, duplicated, or
+out-of-order fragments. The diagnostics result reports elapsed time, effective
+bytes per second, negotiated MTU, and selected payload size for comparison on
+Windows and iPhone.
+
+Hardware benchmark on Windows with MTU 23 and 16-byte payload fragments:
+
+- Initial acknowledged-write transport: 1024 bytes in 7284 ms, about 141 B/s.
+- Windowed write-without-response RAM test: 1024 bytes in 1077 ms, 950 B/s.
+- Windowed secondary-flash test with readback: 1024 bytes in 1175 ms, 871 B/s.
+- Complete secondary-slot staging with 64-byte flow-control intervals: 366680
+  bytes in 641 seconds, 572 B/s, including progressive sector erasure and full
+  flash readback verification.
+
+The windowed transport is therefore about 6.8 times faster on the tested
+Windows link. At the measured flash-test rate, a current 366 KiB image would
+take roughly seven minutes. An iPhone may be faster if CoreBluetooth negotiates
+an MTU above 23.
 
 ### Secondary-slot flash test
 
@@ -201,6 +229,40 @@ area, or the remainder of the secondary slot. It does not mark an image
 pending, invoke MCUboot, or reboot. Its purpose is to prove the flash API and
 BLE/flash interaction before extending erasure and programming across the full
 secondary slot.
+
+### Full-image staging
+
+Control command `0x05` stages the bundled `mower-update.bin` across the full
+secondary slot. The firmware validates the fixed slot boundary and flash
+program alignment, then erases sectors progressively immediately before they
+are written. The phone supplies only ordered image bytes; it cannot select a
+flash address.
+
+At finish, the firmware compares the streaming CRC-32, reads the complete image
+back from flash and independently checks its CRC-32, then validates the MCUboot
+header magic, 0x200-byte header size, declared image size, and TLV header. Only
+then does it report success. This milestone intentionally does not write the
+MCUboot trailer, mark the image pending, reboot, or swap slots, so a successful
+test leaves the currently running firmware unchanged.
+
+`build_ota.ps1` copies the checked update image and its manifest into
+`assets/firmware/`, making the firmware release part of the Flutter app. About
+& Diagnostics shows an explicit confirmation and transfer progress before
+staging that embedded image.
+
+This path was hardware-verified on Windows on 2026-08-19 with firmware 0.1.0:
+all 366680 bytes were staged and verified successfully. Acknowledged writes at
+each 4 KiB erase boundary and every 64 transferred bytes provide the flow
+control needed to avoid overrunning the Arduino BLE receive queue while flash
+operations are in progress.
+
+A later reliability pass retained direct, aligned per-fragment flash writes,
+added recoverable offset acknowledgements, repeated active-transfer status,
+bounded Flutter write retries, and reduced telemetry from 50 Hz to 1 Hz during
+OTA. Buffering larger flash writes was rejected after hardware tests showed it
+could starve ArduinoBLE and make the board temporarily unreachable. The final
+367000-byte image completed staging and verification on Windows at approximately
+500--600 B/s; the exact result was not retained.
 
 ## Current LED diagnostics
 
@@ -235,7 +297,6 @@ the red LED rather than Arduino's yellow built-in LED.
 ## Next milestones
 
 1. Add production signing keys and enable signature enforcement in MCUboot.
-2. Add a BLE update service that can erase and write only the secondary slot.
-3. Add the update controls and progress display to About & Diagnostics.
-4. Test interrupted transfers, interrupted swaps, trial confirmation, rollback,
+2. Mark a verified staged image pending, reboot, and confirm the trial image.
+3. Test interrupted transfers, interrupted swaps, trial confirmation, rollback,
    incompatible images, corrupt images, and low-voltage rejection.

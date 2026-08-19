@@ -15,11 +15,21 @@ final _otaStatusCharUuid = Guid('12345678-1234-5678-1234-56789abcdef6');
 class OtaTransportTestResult {
   final int bytesTransferred;
   final int crc32;
+  final Duration elapsed;
+  final int mtu;
+  final int payloadBytesPerChunk;
 
   const OtaTransportTestResult({
     required this.bytesTransferred,
     required this.crc32,
+    required this.elapsed,
+    required this.mtu,
+    required this.payloadBytesPerChunk,
   });
+
+  double get bytesPerSecond => elapsed.inMicroseconds == 0
+      ? 0
+      : bytesTransferred * 1000000 / elapsed.inMicroseconds;
 }
 
 class _OtaStatus {
@@ -223,6 +233,9 @@ class MowerBleService {
     }
 
     await _telemetryChar!.setNotifyValue(true);
+    if (_otaStatusChar != null) {
+      await _otaStatusChar!.setNotifyValue(true);
+    }
   }
 
   Future<void> disconnect() async {
@@ -267,14 +280,32 @@ class MowerBleService {
 
   Future<OtaTransportTestResult> runOtaTransportTest({
     void Function(double progress)? onProgress,
-  }) => _runOtaTest(startCommand: 0x01, onProgress: onProgress);
+  }) => _runOtaTransfer(
+    startCommand: 0x01,
+    payload: _makeTestPayload(),
+    onProgress: onProgress,
+  );
 
   Future<OtaTransportTestResult> runOtaSecondarySlotFlashTest({
     void Function(double progress)? onProgress,
-  }) => _runOtaTest(startCommand: 0x04, onProgress: onProgress);
+  }) => _runOtaTransfer(
+    startCommand: 0x04,
+    payload: _makeTestPayload(),
+    onProgress: onProgress,
+  );
 
-  Future<OtaTransportTestResult> _runOtaTest({
+  Future<OtaTransportTestResult> stageOtaImage(
+    List<int> image, {
+    void Function(double progress)? onProgress,
+  }) => _runOtaTransfer(
+    startCommand: 0x05,
+    payload: image,
+    onProgress: onProgress,
+  );
+
+  Future<OtaTransportTestResult> _runOtaTransfer({
     required int startCommand,
+    required List<int> payload,
     void Function(double progress)? onProgress,
   }) async {
     final control = _otaControlChar;
@@ -284,12 +315,11 @@ class MowerBleService {
       throw StateError('Firmware transport characteristics not found');
     }
 
-    final payload = List<int>.generate(
-      1024,
-      (index) => (index * 37 + 11) & 0xff,
-      growable: false,
-    );
     final crc = _crc32(payload);
+    final mtu = _device?.mtuNow ?? 23;
+    var payloadBytesPerChunk = (mtu - 7).clamp(16, 240).toInt();
+    payloadBytesPerChunk -= payloadBytesPerChunk % 4;
+    const acknowledgementWindowBytes = 256;
     final start = <int>[
       startCommand,
       ..._uint32Le(payload.length),
@@ -297,44 +327,96 @@ class MowerBleService {
     ];
 
     try {
+      final stopwatch = Stopwatch()..start();
+      var statusFuture = _waitForOtaStatus(
+        status,
+        (value) =>
+            value.result != 0 ||
+            (value.state == 1 &&
+                value.receivedBytes == 0 &&
+                value.expectedBytes == payload.length),
+      );
       await control.write(start, withoutResponse: false);
-      var current = await _readOtaStatus(status);
+      var current = await statusFuture;
       _requireOtaStatus(
         current,
         expectedState: 1,
         expectedBytes: payload.length,
       );
 
-      for (var offset = 0; offset < payload.length; offset += 16) {
-        final end = (offset + 16 < payload.length)
-            ? offset + 16
+      var offset = 0;
+      while (offset < payload.length) {
+        final windowStart = offset;
+        final windowTarget =
+            (windowStart + acknowledgementWindowBytes < payload.length)
+            ? windowStart + acknowledgementWindowBytes
             : payload.length;
-        final packet = <int>[
-          ..._uint32Le(offset),
-          ...payload.sublist(offset, end),
-        ];
-        await data.write(packet, withoutResponse: false);
-        current = await _readOtaStatus(status);
+        statusFuture = _waitForOtaWindowStatus(
+          status,
+          expectedBytes: payload.length,
+          windowStart: windowStart,
+          windowTarget: windowTarget,
+        );
+        do {
+          final end = (offset + payloadBytesPerChunk < payload.length)
+              ? offset + payloadBytesPerChunk
+              : payload.length;
+          final packet = <int>[
+            ..._uint32Le(offset),
+            ...payload.sublist(offset, end),
+          ];
+          // WinRT's MTU-23 path needs explicit controller flow control. This
+          // 64-byte cadence is the configuration proven over a complete image.
+          // iOS keeps the faster no-response path and can use its larger MTU.
+          final requiresWindowsFlowControl =
+              Platform.isWindows && startCommand != 0x01 && end % 64 == 0;
+          await _writeOtaPacket(
+            data,
+            packet,
+            withoutResponse: !requiresWindowsFlowControl,
+          );
+          offset = end;
+        } while (offset < payload.length &&
+            offset - windowStart < acknowledgementWindowBytes);
+
+        current = await statusFuture;
         _requireOtaStatus(
           current,
           expectedState: 1,
           expectedBytes: payload.length,
-          expectedReceivedBytes: end,
         );
-        onProgress?.call(end / payload.length);
+        if (current.receivedBytes > offset) {
+          throw StateError('Firmware reported an impossible transfer offset');
+        }
+        // A partial status that settles below the target is a recoverable
+        // NACK. Resume at the first byte the Arduino did not accept.
+        offset = current.receivedBytes;
+        onProgress?.call(offset / payload.length);
       }
 
+      statusFuture = _waitForOtaStatus(
+        status,
+        (value) =>
+            value.result != 0 ||
+            (value.state == 2 &&
+                value.receivedBytes == payload.length &&
+                value.expectedBytes == payload.length),
+      );
       await control.write([0x02], withoutResponse: false);
-      final completed = await _readOtaStatus(status);
+      final completed = await statusFuture;
       _requireOtaStatus(
         completed,
         expectedState: 2,
         expectedBytes: payload.length,
         expectedReceivedBytes: payload.length,
       );
+      stopwatch.stop();
       return OtaTransportTestResult(
         bytesTransferred: payload.length,
         crc32: crc,
+        elapsed: stopwatch.elapsed,
+        mtu: mtu,
+        payloadBytesPerChunk: payloadBytesPerChunk,
       );
     } catch (_) {
       try {
@@ -344,6 +426,34 @@ class MowerBleService {
       }
       rethrow;
     }
+  }
+
+  static List<int> _makeTestPayload() => List<int>.generate(
+    1024,
+    (index) => (index * 37 + 11) & 0xff,
+    growable: false,
+  );
+
+  static Future<void> _writeOtaPacket(
+    BluetoothCharacteristic characteristic,
+    List<int> packet, {
+    required bool withoutResponse,
+  }) async {
+    Object? lastError;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        await characteristic.write(packet, withoutResponse: withoutResponse);
+        return;
+      } catch (error) {
+        lastError = error;
+        if (attempt < 2) {
+          await Future<void>.delayed(
+            Duration(milliseconds: 100 * (attempt + 1)),
+          );
+        }
+      }
+    }
+    throw StateError('BLE write failed after 3 attempts: $lastError');
   }
 
   static List<int> _uint32Le(int value) => [
@@ -370,10 +480,7 @@ class MowerBleService {
     return (crc ^ 0xffffffff) & 0xffffffff;
   }
 
-  static Future<_OtaStatus> _readOtaStatus(
-    BluetoothCharacteristic characteristic,
-  ) async {
-    final bytes = await characteristic.read();
+  static _OtaStatus _parseOtaStatus(List<int> bytes) {
     if (bytes.length != 10) {
       throw StateError('Invalid firmware transport status length');
     }
@@ -385,6 +492,70 @@ class MowerBleService {
     );
   }
 
+  static Future<_OtaStatus> _waitForOtaStatus(
+    BluetoothCharacteristic characteristic,
+    bool Function(_OtaStatus status) matches,
+  ) => characteristic.onValueReceived
+      .map(_parseOtaStatus)
+      .where(matches)
+      .first
+      .timeout(const Duration(seconds: 30));
+
+  static Future<_OtaStatus> _waitForOtaWindowStatus(
+    BluetoothCharacteristic characteristic, {
+    required int expectedBytes,
+    required int windowStart,
+    required int windowTarget,
+  }) async {
+    final completer = Completer<_OtaStatus>();
+    _OtaStatus? latestPartial;
+    int? latestPartialOffset;
+    Timer? settleTimer;
+    late final StreamSubscription<List<int>> subscription;
+
+    void complete(_OtaStatus value) {
+      if (!completer.isCompleted) completer.complete(value);
+    }
+
+    subscription = characteristic.onValueReceived.listen(
+      (bytes) {
+        final value = _parseOtaStatus(bytes);
+        if (value.result != 0 ||
+            (value.state == 1 &&
+                value.expectedBytes == expectedBytes &&
+                value.receivedBytes >= windowTarget)) {
+          complete(value);
+          return;
+        }
+        if (value.state != 1 ||
+            value.expectedBytes != expectedBytes ||
+            value.receivedBytes < windowStart) {
+          return;
+        }
+
+        latestPartial = value;
+        if (latestPartialOffset != value.receivedBytes) {
+          latestPartialOffset = value.receivedBytes;
+          settleTimer?.cancel();
+          settleTimer = Timer(const Duration(seconds: 2), () {
+            final partial = latestPartial;
+            if (partial != null) complete(partial);
+          });
+        }
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        if (!completer.isCompleted) completer.completeError(error, stackTrace);
+      },
+    );
+
+    try {
+      return await completer.future.timeout(const Duration(seconds: 30));
+    } finally {
+      settleTimer?.cancel();
+      await subscription.cancel();
+    }
+  }
+
   static void _requireOtaStatus(
     _OtaStatus status, {
     required int expectedState,
@@ -392,7 +563,10 @@ class MowerBleService {
     int? expectedReceivedBytes,
   }) {
     if (status.result != 0) {
-      throw StateError('Firmware transport rejected data (${status.result})');
+      throw StateError(
+        'Firmware transport rejected data (${status.result}) at '
+        '${status.receivedBytes}/${status.expectedBytes} bytes',
+      );
     }
     if (status.state != expectedState ||
         status.expectedBytes != expectedBytes ||

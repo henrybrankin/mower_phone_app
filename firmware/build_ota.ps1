@@ -12,6 +12,7 @@ $repositoryRoot = Split-Path -Parent $firmwareDirectory
 $sketchDirectory = Join-Path $firmwareDirectory 'mower_mcu'
 $sketchPath = Join-Path $sketchDirectory 'mower_mcu.ino'
 $otaDirectory = Join-Path $firmwareDirectory 'ota'
+$flutterFirmwareAssets = Join-Path $repositoryRoot 'assets\firmware'
 $toolsDirectory = Join-Path $repositoryRoot '.tools'
 $zephyrProject = Join-Path $toolsDirectory 'zephyrproject'
 $mcubootDirectory = Join-Path $zephyrProject 'bootloader\mcuboot'
@@ -240,7 +241,14 @@ $manifest = [ordered]@{
 }
 $manifest | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
 
+New-Item -ItemType Directory -Force -Path $flutterFirmwareAssets | Out-Null
+Copy-Item -LiteralPath $updateBinary `
+    -Destination (Join-Path $flutterFirmwareAssets 'mower-update.bin') -Force
+Copy-Item -LiteralPath $manifestPath `
+    -Destination (Join-Path $flutterFirmwareAssets 'mower-ota-manifest.json') -Force
+
 Write-Host "`nOTA artifacts created in $OutputDirectory"
 Write-Host "  mower-update.bin : $($update.Length) bytes  SHA-256 $updateHash"
 Write-Host "  mower-sam-ba.bin : $($combined.Length) bytes  SHA-256 $samBaHash"
 Write-Host '  mower-ota-manifest.json'
+Write-Host "Flutter firmware assets updated in $flutterFirmwareAssets"
