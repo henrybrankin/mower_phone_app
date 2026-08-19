@@ -368,23 +368,16 @@ class MowerBleService {
             ...payload.sublist(offset, end),
           ];
           // WinRT's MTU-23 path uses the proven 64-byte flow-control cadence.
-          // iOS acknowledges ordinary large packets, but a packet that starts
-          // a sector erase must not wait for a GATT response during that erase.
-          final crossesFlashSectorBoundary =
-              startCommand == 0x05 &&
-              (offset == 0 || offset ~/ 4096 != (end - 1) ~/ 4096);
+          // iOS acknowledges each larger packet; the Arduino has already
+          // completed all sector erases before entering the receiving state.
           final requiresFlowControl =
               startCommand != 0x01 &&
-              ((Platform.isWindows && end % 64 == 0) ||
-                  (Platform.isIOS && !crossesFlashSectorBoundary));
+              ((Platform.isWindows && end % 64 == 0) || Platform.isIOS);
           await _writeOtaPacket(
             data,
             packet,
             withoutResponse: !requiresFlowControl,
           );
-          if (Platform.isIOS && crossesFlashSectorBoundary) {
-            await Future<void>.delayed(const Duration(milliseconds: 200));
-          }
           offset = end;
         } while (offset < payload.length &&
             offset - windowStart < acknowledgementWindowBytes);

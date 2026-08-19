@@ -38,6 +38,7 @@ enum OtaState : uint8_t {
   kOtaReceiving = 1,
   kOtaComplete = 2,
   kOtaError = 3,
+  kOtaPreparing = 4,
 };
 
 enum OtaResult : uint8_t {
@@ -223,6 +224,27 @@ static bool eraseFlashThrough(uint32_t exclusiveOffset) {
   return true;
 }
 
+static bool eraseNextOtaSector() {
+  const uint32_t requiredEnd = kSecondarySlotAddress + g_otaExpectedBytes;
+  if (g_otaNextSectorEraseAddress >= requiredEnd) {
+    g_otaState = kOtaReceiving;
+    publishOtaStatus();
+    return true;
+  }
+
+  const uint32_t slotEnd = kSecondarySlotAddress + kSecondarySlotSize;
+  const uint32_t sectorSize =
+      g_flash.get_sector_size(g_otaNextSectorEraseAddress);
+  if (sectorSize == 0 ||
+      g_otaNextSectorEraseAddress + sectorSize > slotEnd ||
+      g_flash.erase(g_otaNextSectorEraseAddress, sectorSize) != 0) {
+    setOtaError(kOtaResultFlashEraseFailed);
+    return false;
+  }
+  g_otaNextSectorEraseAddress += sectorSize;
+  return true;
+}
+
 static bool verifyFlashReadback() {
   alignas(4) uint8_t readBuffer[64];
   uint32_t crc = 0xFFFFFFFFu;
@@ -325,7 +347,7 @@ static void handleOtaControl(BLEDevice, BLECharacteristic) {
         setOtaError(kOtaResultInvalidLength);
         return;
       }
-      g_otaState = kOtaReceiving;
+      g_otaState = g_otaStagesFullImage ? kOtaPreparing : kOtaReceiving;
       g_otaResult = kOtaResultOk;
       publishOtaStatus();
       break;
@@ -483,6 +505,10 @@ void setup() {
 void loop() {
   BLEDevice central = BLE.central();
 
+  if (g_otaState == kOtaPreparing && !eraseNextOtaSector()) {
+    return;
+  }
+
   if (g_otaState == kOtaReceiving &&
       millis() - g_otaLastStatusMillis >= 1000) {
     // Credit/status notifications are idempotent. Repeat the latest offset so
@@ -558,8 +584,10 @@ void loop() {
     int8_t temp = gotGyro ? static_cast<int8_t>(constrain(roundf(gz), -128.0f, 127.0f)) : 0;
     uint8_t packet[4] = {static_cast<uint8_t>(roll), static_cast<uint8_t>(pitch), pressure, static_cast<uint8_t>(temp)};
 
+    const bool otaActive =
+        g_otaState == kOtaReceiving || g_otaState == kOtaPreparing;
     const bool otaTelemetryDue =
-        g_otaState != kOtaReceiving ||
+        !otaActive ||
         now - g_otaLastTelemetryMillis >= 1000;
     if (g_isConnected && otaTelemetryDue) {
       telemetryChar.setValue(packet, sizeof(packet));
