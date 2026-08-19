@@ -81,3 +81,13 @@ When starting through MCUboot, the sketch deliberately power-cycles the
 onboard sensor rail and re-enables the Nano's software-controlled internal I2C
 pull-ups before initializing the BMI270. This hardware-verified handoff step is
 required for reliable IMU identification; see [OTA-DESIGN.md](OTA-DESIGN.md).
+
+The firmware also exposes the stage-one, non-destructive BLE OTA transport
+test. From Flutter's About & Diagnostics screen it transfers a generated 1 KiB
+payload with ordered offsets and CRC-32 verification. It does not write flash
+or reboot; the protocol is documented in [OTA-DESIGN.md](OTA-DESIGN.md).
+
+The same screen has a separately confirmed secondary-slot flash test. It
+erases only the first 4 KiB sector at `0x8E000`, writes the 1 KiB test payload,
+and verifies flash readback CRC-32. It does not mark an update pending or
+reboot, but it does destroy any previously staged secondary image.

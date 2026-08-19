@@ -153,6 +153,55 @@ the verification model.
    restart.
 9. Flutter reconnects and verifies the newly reported firmware version.
 
+## Stage-one BLE transport test
+
+The first implemented OTA stage is intentionally non-destructive. It proves
+ordered chunk transfer and end-to-end CRC-32 validation but does not retain the
+payload, erase or write flash, mark an MCUboot image pending, or reboot.
+
+Three characteristics extend the existing mower service:
+
+| Characteristic | UUID suffix | Properties | Payload |
+| --- | --- | --- | --- |
+| OTA control | `...def4` | Write | Command plus optional parameters |
+| OTA data | `...def5` | Write | 32-bit offset plus up to 16 data bytes |
+| OTA status | `...def6` | Read, Notify | State, result, received length, expected length |
+
+All multibyte integers are unsigned little-endian. Control command `0x01`
+starts a transfer and contains the total length and expected IEEE CRC-32.
+Command `0x02` finishes and validates it; command `0x03` aborts and resets the
+receiver. The status payload is ten bytes: one state byte, one result byte,
+four received-length bytes, and four expected-length bytes.
+
+The receiver accepts only the next exact byte offset, rejects chunks that
+would exceed the announced length, and currently limits test transfers to
+4096 bytes. Flutter sends a deterministic 1024-byte payload in 16-byte chunks,
+uses acknowledged writes, and reads status after every chunk. The About &
+Diagnostics screen reports progress and the validated CRC-32. This deliberately
+slow stop-and-confirm flow establishes correctness before adding flash writes
+or optimizing throughput.
+
+### Secondary-slot flash test
+
+A separate, explicitly confirmed diagnostics action exercises real internal
+flash writes without attempting an update. Control command `0x04` starts this
+mode. The Arduino accepts exactly 1024 bytes and uses a compile-time address of
+`0x8E000`; the phone cannot provide or alter the destination address.
+
+Before receiving data, the firmware validates the FlashIAP-reported flash
+range, erase-sector size, program alignment, secondary-slot boundary, and test
+length. It then erases only the first 4 KiB sector of the secondary slot,
+programs aligned 16-byte chunks, and calculates the streaming CRC-32. At finish
+it reads the 1 KiB back from flash and independently recalculates CRC-32 before
+reporting success.
+
+This test destroys any pending image already stored at the beginning of the
+secondary slot. It cannot write the primary slot, MCUboot, SAM-BA, the scratch
+area, or the remainder of the secondary slot. It does not mark an image
+pending, invoke MCUboot, or reboot. Its purpose is to prove the flash API and
+BLE/flash interaction before extending erasure and programming across the full
+secondary slot.
+
 ## Current LED diagnostics
 
 The Arduino mower sketch uses the yellow `LED_BUILTIN` during startup:

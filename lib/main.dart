@@ -231,6 +231,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         builder: (_) => AboutDiagnosticsScreen(
           mowerConnected: _connected,
           mowerFirmwareVersion: _firmwareVersion,
+          bleService: _bleService,
         ),
       ),
     );

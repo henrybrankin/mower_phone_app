@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include <Arduino_BMI270_BMM150.h>
+#include <FlashIAP.h>
 
 #include <ArduinoBLE.h>
 
@@ -9,6 +10,9 @@
 #define TELEMETRY_CHAR_UUID       "12345678-1234-5678-1234-56789abcdef1"
 #define CONTROL_CHAR_UUID         "12345678-1234-5678-1234-56789abcdef2"
 #define VERSION_CHAR_UUID         "12345678-1234-5678-1234-56789abcdef3"
+#define OTA_CONTROL_CHAR_UUID     "12345678-1234-5678-1234-56789abcdef4"
+#define OTA_DATA_CHAR_UUID        "12345678-1234-5678-1234-56789abcdef5"
+#define OTA_STATUS_CHAR_UUID      "12345678-1234-5678-1234-56789abcdef6"
 
 const char kFirmwareVersion[] = "0.1.0";
 
@@ -24,6 +28,42 @@ bool g_headingValid = false;
 const unsigned long kUpdateIntervalMs = 20;
 const float kComplementaryAlpha = 0.95f;
 const float kHeadingAlpha = 0.2f;
+const uint32_t kMaxOtaTransportTestBytes = 4096;
+const uint32_t kSecondarySlotAddress = 0x0008E000u;
+const uint32_t kSecondarySlotSize = 0x0006E000u;
+const uint32_t kOtaFlashTestBytes = 1024;
+
+enum OtaState : uint8_t {
+  kOtaIdle = 0,
+  kOtaReceiving = 1,
+  kOtaComplete = 2,
+  kOtaError = 3,
+};
+
+enum OtaResult : uint8_t {
+  kOtaResultOk = 0,
+  kOtaResultInvalidCommand = 1,
+  kOtaResultInvalidLength = 2,
+  kOtaResultUnexpectedOffset = 3,
+  kOtaResultLengthMismatch = 4,
+  kOtaResultCrcMismatch = 5,
+  kOtaResultNotReceiving = 6,
+  kOtaResultFlashInitFailed = 7,
+  kOtaResultFlashLayoutInvalid = 8,
+  kOtaResultFlashEraseFailed = 9,
+  kOtaResultFlashProgramFailed = 10,
+  kOtaResultFlashReadbackFailed = 11,
+};
+
+uint8_t g_otaState = kOtaIdle;
+uint8_t g_otaResult = kOtaResultOk;
+uint32_t g_otaExpectedBytes = 0;
+uint32_t g_otaReceivedBytes = 0;
+uint32_t g_otaExpectedCrc = 0;
+uint32_t g_otaRunningCrc = 0xFFFFFFFFu;
+bool g_otaWritesFlash = false;
+bool g_flashInitialized = false;
+mbed::FlashIAP g_flash;
 
 static void haltWithBlinkCode(uint8_t blinkCount) {
   for (;;) {
@@ -75,10 +115,221 @@ static void updateHeadingFromMag(float mx, float my, float mz, float rollDeg, fl
   g_headingDeg = wrapHeading360(g_headingDeg + (kHeadingAlpha * delta));
 }
 
+static uint32_t readUint32Le(const uint8_t* bytes) {
+  return static_cast<uint32_t>(bytes[0]) |
+         (static_cast<uint32_t>(bytes[1]) << 8) |
+         (static_cast<uint32_t>(bytes[2]) << 16) |
+         (static_cast<uint32_t>(bytes[3]) << 24);
+}
+
+static void writeUint32Le(uint8_t* bytes, uint32_t value) {
+  bytes[0] = static_cast<uint8_t>(value);
+  bytes[1] = static_cast<uint8_t>(value >> 8);
+  bytes[2] = static_cast<uint8_t>(value >> 16);
+  bytes[3] = static_cast<uint8_t>(value >> 24);
+}
+
+static uint32_t updateCrc32(uint32_t crc, const uint8_t* bytes, size_t length) {
+  for (size_t i = 0; i < length; ++i) {
+    crc ^= bytes[i];
+    for (uint8_t bit = 0; bit < 8; ++bit) {
+      crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
+    }
+  }
+  return crc;
+}
+
 BLEService mowerService(MOWER_SERVICE_UUID);
 BLECharacteristic telemetryChar(TELEMETRY_CHAR_UUID, BLERead | BLENotify, 4);
 BLECharacteristic controlChar(CONTROL_CHAR_UUID, BLEWrite, 1);
 BLEStringCharacteristic versionChar(VERSION_CHAR_UUID, BLERead, 16);
+BLECharacteristic otaControlChar(OTA_CONTROL_CHAR_UUID, BLEWrite, 9);
+BLECharacteristic otaDataChar(OTA_DATA_CHAR_UUID, BLEWrite, 20);
+BLECharacteristic otaStatusChar(OTA_STATUS_CHAR_UUID, BLERead | BLENotify, 10);
+
+static void publishOtaStatus() {
+  uint8_t status[10] = {g_otaState, g_otaResult};
+  writeUint32Le(status + 2, g_otaReceivedBytes);
+  writeUint32Le(status + 6, g_otaExpectedBytes);
+  otaStatusChar.setValue(status, sizeof(status));
+  if (g_isConnected) {
+    otaStatusChar.broadcast();
+  }
+}
+
+static void setOtaError(uint8_t result) {
+  g_otaState = kOtaError;
+  g_otaResult = result;
+  publishOtaStatus();
+}
+
+static bool prepareFlashTest() {
+  if (!g_flashInitialized) {
+    if (g_flash.init() != 0) {
+      setOtaError(kOtaResultFlashInitFailed);
+      return false;
+    }
+    g_flashInitialized = true;
+  }
+
+  const uint32_t flashStart = g_flash.get_flash_start();
+  const uint32_t flashSize = g_flash.get_flash_size();
+  const uint32_t sectorSize = g_flash.get_sector_size(kSecondarySlotAddress);
+  const uint32_t programSize = g_flash.get_page_size();
+  if (kSecondarySlotAddress < flashStart ||
+      kSecondarySlotAddress + kSecondarySlotSize > flashStart + flashSize ||
+      sectorSize == 0 ||
+      sectorSize > kSecondarySlotSize ||
+      kSecondarySlotAddress % sectorSize != 0 ||
+      programSize == 0 ||
+      kSecondarySlotAddress % programSize != 0 ||
+      kOtaFlashTestBytes > sectorSize) {
+    setOtaError(kOtaResultFlashLayoutInvalid);
+    return false;
+  }
+  if (g_flash.erase(kSecondarySlotAddress, sectorSize) != 0) {
+    setOtaError(kOtaResultFlashEraseFailed);
+    return false;
+  }
+  return true;
+}
+
+static bool verifyFlashTestReadback() {
+  alignas(4) uint8_t readBuffer[64];
+  uint32_t crc = 0xFFFFFFFFu;
+  for (uint32_t offset = 0; offset < g_otaExpectedBytes;
+       offset += sizeof(readBuffer)) {
+    const uint32_t remaining = g_otaExpectedBytes - offset;
+    const uint32_t length = remaining < sizeof(readBuffer)
+                                ? remaining
+                                : sizeof(readBuffer);
+    if (g_flash.read(readBuffer, kSecondarySlotAddress + offset, length) != 0) {
+      setOtaError(kOtaResultFlashReadbackFailed);
+      return false;
+    }
+    crc = updateCrc32(crc, readBuffer, length);
+  }
+  if ((crc ^ 0xFFFFFFFFu) != g_otaExpectedCrc) {
+    setOtaError(kOtaResultFlashReadbackFailed);
+    return false;
+  }
+  return true;
+}
+
+static void handleOtaControl(BLEDevice, BLECharacteristic) {
+  const int length = otaControlChar.valueLength();
+  const uint8_t* value = otaControlChar.value();
+  if (length < 1) {
+    setOtaError(kOtaResultInvalidCommand);
+    return;
+  }
+
+  switch (value[0]) {
+    case 0x01:
+    case 0x04:
+      if (length != 9) {
+        setOtaError(kOtaResultInvalidCommand);
+        return;
+      }
+      g_otaExpectedBytes = readUint32Le(value + 1);
+      g_otaExpectedCrc = readUint32Le(value + 5);
+      g_otaReceivedBytes = 0;
+      g_otaRunningCrc = 0xFFFFFFFFu;
+      g_otaWritesFlash = value[0] == 0x04;
+      if (g_otaExpectedBytes == 0 ||
+          g_otaExpectedBytes > kMaxOtaTransportTestBytes) {
+        setOtaError(kOtaResultInvalidLength);
+        return;
+      }
+      if (g_otaWritesFlash &&
+          (g_otaExpectedBytes != kOtaFlashTestBytes || !prepareFlashTest())) {
+        if (g_otaState != kOtaError) {
+          setOtaError(kOtaResultInvalidLength);
+        }
+        return;
+      }
+      g_otaState = kOtaReceiving;
+      g_otaResult = kOtaResultOk;
+      publishOtaStatus();
+      break;
+
+    case 0x02:
+      if (g_otaState != kOtaReceiving) {
+        setOtaError(kOtaResultNotReceiving);
+      } else if (g_otaReceivedBytes != g_otaExpectedBytes) {
+        setOtaError(kOtaResultLengthMismatch);
+      } else if ((g_otaRunningCrc ^ 0xFFFFFFFFu) != g_otaExpectedCrc) {
+        setOtaError(kOtaResultCrcMismatch);
+      } else if (g_otaWritesFlash && !verifyFlashTestReadback()) {
+        return;
+      } else {
+        g_otaState = kOtaComplete;
+        g_otaResult = kOtaResultOk;
+        publishOtaStatus();
+      }
+      break;
+
+    case 0x03:
+      g_otaState = kOtaIdle;
+      g_otaResult = kOtaResultOk;
+      g_otaExpectedBytes = 0;
+      g_otaReceivedBytes = 0;
+      g_otaExpectedCrc = 0;
+      g_otaRunningCrc = 0xFFFFFFFFu;
+      g_otaWritesFlash = false;
+      publishOtaStatus();
+      break;
+
+    default:
+      setOtaError(kOtaResultInvalidCommand);
+      break;
+  }
+}
+
+static void handleOtaData(BLEDevice, BLECharacteristic) {
+  const int length = otaDataChar.valueLength();
+  const uint8_t* value = otaDataChar.value();
+  if (g_otaState != kOtaReceiving) {
+    setOtaError(kOtaResultNotReceiving);
+    return;
+  }
+  if (length <= 4) {
+    setOtaError(kOtaResultInvalidLength);
+    return;
+  }
+
+  const uint32_t offset = readUint32Le(value);
+  const uint32_t payloadLength = static_cast<uint32_t>(length - 4);
+  if (offset != g_otaReceivedBytes) {
+    setOtaError(kOtaResultUnexpectedOffset);
+    return;
+  }
+  if (g_otaReceivedBytes > g_otaExpectedBytes ||
+      payloadLength > g_otaExpectedBytes - g_otaReceivedBytes) {
+    setOtaError(kOtaResultInvalidLength);
+    return;
+  }
+
+  if (g_otaWritesFlash) {
+    const uint32_t programSize = g_flash.get_page_size();
+    if (payloadLength > 16 || payloadLength % programSize != 0 ||
+        offset % programSize != 0) {
+      setOtaError(kOtaResultInvalidLength);
+      return;
+    }
+    alignas(4) uint8_t programBuffer[16];
+    memcpy(programBuffer, value + 4, payloadLength);
+    if (g_flash.program(programBuffer, kSecondarySlotAddress + offset,
+                        payloadLength) != 0) {
+      setOtaError(kOtaResultFlashProgramFailed);
+      return;
+    }
+  }
+
+  g_otaRunningCrc = updateCrc32(g_otaRunningCrc, value + 4, payloadLength);
+  g_otaReceivedBytes += payloadLength;
+  publishOtaStatus();
+}
 
 void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
@@ -117,9 +368,13 @@ void setup() {
   mowerService.addCharacteristic(telemetryChar);
   mowerService.addCharacteristic(controlChar);
   mowerService.addCharacteristic(versionChar);
+  mowerService.addCharacteristic(otaControlChar);
+  mowerService.addCharacteristic(otaDataChar);
+  mowerService.addCharacteristic(otaStatusChar);
   BLE.addService(mowerService);
 
   versionChar.writeValue(kFirmwareVersion);
+  publishOtaStatus();
 
   controlChar.setEventHandler(BLEWritten, [](BLEDevice central, BLECharacteristic characteristic) {
     if (controlChar.valueLength() > 0 && controlChar.value()[0] == 0x01) {
@@ -127,6 +382,8 @@ void setup() {
       Serial.println("Received zero command");
     }
   });
+  otaControlChar.setEventHandler(BLEWritten, handleOtaControl);
+  otaDataChar.setEventHandler(BLEWritten, handleOtaData);
 
   BLE.advertise();
   digitalWrite(LED_BUILTIN, HIGH);

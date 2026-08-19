@@ -8,6 +8,33 @@ final _mowerServiceUuid = Guid('12345678-1234-5678-1234-56789abcdef0');
 final _telemetryCharUuid = Guid('12345678-1234-5678-1234-56789abcdef1');
 final _controlCharUuid = Guid('12345678-1234-5678-1234-56789abcdef2');
 final _versionCharUuid = Guid('12345678-1234-5678-1234-56789abcdef3');
+final _otaControlCharUuid = Guid('12345678-1234-5678-1234-56789abcdef4');
+final _otaDataCharUuid = Guid('12345678-1234-5678-1234-56789abcdef5');
+final _otaStatusCharUuid = Guid('12345678-1234-5678-1234-56789abcdef6');
+
+class OtaTransportTestResult {
+  final int bytesTransferred;
+  final int crc32;
+
+  const OtaTransportTestResult({
+    required this.bytesTransferred,
+    required this.crc32,
+  });
+}
+
+class _OtaStatus {
+  final int state;
+  final int result;
+  final int receivedBytes;
+  final int expectedBytes;
+
+  const _OtaStatus({
+    required this.state,
+    required this.result,
+    required this.receivedBytes,
+    required this.expectedBytes,
+  });
+}
 
 class MowerBleService {
   final String deviceName;
@@ -16,6 +43,9 @@ class MowerBleService {
   BluetoothCharacteristic? _telemetryChar;
   BluetoothCharacteristic? _controlChar;
   BluetoothCharacteristic? _versionChar;
+  BluetoothCharacteristic? _otaControlChar;
+  BluetoothCharacteristic? _otaDataChar;
+  BluetoothCharacteristic? _otaStatusChar;
   StreamSubscription<List<ScanResult>>? _scanSub;
   StreamSubscription<BluetoothConnectionState>? _connSub;
   final _connectionStateController =
@@ -25,6 +55,9 @@ class MowerBleService {
 
   Stream<BluetoothConnectionState> get connectionState =>
       _connectionStateController.stream;
+
+  bool get otaTransportAvailable =>
+      _otaControlChar != null && _otaDataChar != null && _otaStatusChar != null;
 
   String get platformName {
     if (Platform.isIOS) return 'iPhone';
@@ -153,6 +186,9 @@ class MowerBleService {
         _telemetryChar = null;
         _controlChar = null;
         _versionChar = null;
+        _otaControlChar = null;
+        _otaDataChar = null;
+        _otaStatusChar = null;
       }
     });
 
@@ -168,6 +204,15 @@ class MowerBleService {
           }
           if (characteristic.uuid == _versionCharUuid) {
             _versionChar = characteristic;
+          }
+          if (characteristic.uuid == _otaControlCharUuid) {
+            _otaControlChar = characteristic;
+          }
+          if (characteristic.uuid == _otaDataCharUuid) {
+            _otaDataChar = characteristic;
+          }
+          if (characteristic.uuid == _otaStatusCharUuid) {
+            _otaStatusChar = characteristic;
           }
         }
       }
@@ -191,6 +236,9 @@ class MowerBleService {
     _telemetryChar = null;
     _controlChar = null;
     _versionChar = null;
+    _otaControlChar = null;
+    _otaDataChar = null;
+    _otaStatusChar = null;
     _device = null;
   }
 
@@ -215,6 +263,146 @@ class MowerBleService {
       throw StateError('Control characteristic not found');
     }
     await _controlChar!.write([0x01], withoutResponse: false);
+  }
+
+  Future<OtaTransportTestResult> runOtaTransportTest({
+    void Function(double progress)? onProgress,
+  }) => _runOtaTest(startCommand: 0x01, onProgress: onProgress);
+
+  Future<OtaTransportTestResult> runOtaSecondarySlotFlashTest({
+    void Function(double progress)? onProgress,
+  }) => _runOtaTest(startCommand: 0x04, onProgress: onProgress);
+
+  Future<OtaTransportTestResult> _runOtaTest({
+    required int startCommand,
+    void Function(double progress)? onProgress,
+  }) async {
+    final control = _otaControlChar;
+    final data = _otaDataChar;
+    final status = _otaStatusChar;
+    if (control == null || data == null || status == null) {
+      throw StateError('Firmware transport characteristics not found');
+    }
+
+    final payload = List<int>.generate(
+      1024,
+      (index) => (index * 37 + 11) & 0xff,
+      growable: false,
+    );
+    final crc = _crc32(payload);
+    final start = <int>[
+      startCommand,
+      ..._uint32Le(payload.length),
+      ..._uint32Le(crc),
+    ];
+
+    try {
+      await control.write(start, withoutResponse: false);
+      var current = await _readOtaStatus(status);
+      _requireOtaStatus(
+        current,
+        expectedState: 1,
+        expectedBytes: payload.length,
+      );
+
+      for (var offset = 0; offset < payload.length; offset += 16) {
+        final end = (offset + 16 < payload.length)
+            ? offset + 16
+            : payload.length;
+        final packet = <int>[
+          ..._uint32Le(offset),
+          ...payload.sublist(offset, end),
+        ];
+        await data.write(packet, withoutResponse: false);
+        current = await _readOtaStatus(status);
+        _requireOtaStatus(
+          current,
+          expectedState: 1,
+          expectedBytes: payload.length,
+          expectedReceivedBytes: end,
+        );
+        onProgress?.call(end / payload.length);
+      }
+
+      await control.write([0x02], withoutResponse: false);
+      final completed = await _readOtaStatus(status);
+      _requireOtaStatus(
+        completed,
+        expectedState: 2,
+        expectedBytes: payload.length,
+        expectedReceivedBytes: payload.length,
+      );
+      return OtaTransportTestResult(
+        bytesTransferred: payload.length,
+        crc32: crc,
+      );
+    } catch (_) {
+      try {
+        await control.write([0x03], withoutResponse: false);
+      } catch (_) {
+        // Preserve the original transfer error if the best-effort abort fails.
+      }
+      rethrow;
+    }
+  }
+
+  static List<int> _uint32Le(int value) => [
+    value & 0xff,
+    (value >> 8) & 0xff,
+    (value >> 16) & 0xff,
+    (value >> 24) & 0xff,
+  ];
+
+  static int _readUint32Le(List<int> bytes, int offset) =>
+      bytes[offset] |
+      (bytes[offset + 1] << 8) |
+      (bytes[offset + 2] << 16) |
+      (bytes[offset + 3] << 24);
+
+  static int _crc32(List<int> bytes) {
+    var crc = 0xffffffff;
+    for (final byte in bytes) {
+      crc ^= byte;
+      for (var bit = 0; bit < 8; bit++) {
+        crc = (crc >> 1) ^ ((crc & 1) == 0 ? 0 : 0xedb88320);
+      }
+    }
+    return (crc ^ 0xffffffff) & 0xffffffff;
+  }
+
+  static Future<_OtaStatus> _readOtaStatus(
+    BluetoothCharacteristic characteristic,
+  ) async {
+    final bytes = await characteristic.read();
+    if (bytes.length != 10) {
+      throw StateError('Invalid firmware transport status length');
+    }
+    return _OtaStatus(
+      state: bytes[0],
+      result: bytes[1],
+      receivedBytes: _readUint32Le(bytes, 2),
+      expectedBytes: _readUint32Le(bytes, 6),
+    );
+  }
+
+  static void _requireOtaStatus(
+    _OtaStatus status, {
+    required int expectedState,
+    required int expectedBytes,
+    int? expectedReceivedBytes,
+  }) {
+    if (status.result != 0) {
+      throw StateError('Firmware transport rejected data (${status.result})');
+    }
+    if (status.state != expectedState ||
+        status.expectedBytes != expectedBytes ||
+        (expectedReceivedBytes != null &&
+            status.receivedBytes != expectedReceivedBytes)) {
+      throw StateError(
+        'Unexpected firmware transport status: state ${status.state}, '
+        '${status.receivedBytes}/${status.expectedBytes} bytes',
+      );
+    }
   }
 
   void dispose() {
