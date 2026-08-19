@@ -368,11 +368,15 @@ class MowerBleService {
             ...payload.sublist(offset, end),
           ];
           // WinRT's MTU-23 path uses the proven 64-byte flow-control cadence.
-          // iOS acknowledges each much larger packet so flash programming can
-          // keep pace without losing a fragment.
+          // iOS acknowledges ordinary large packets, but a packet that starts
+          // a sector erase must not wait for a GATT response during that erase.
+          final crossesFlashSectorBoundary =
+              startCommand == 0x05 &&
+              (offset == 0 || offset ~/ 4096 != (end - 1) ~/ 4096);
           final requiresFlowControl =
               startCommand != 0x01 &&
-              ((Platform.isWindows && end % 64 == 0) || Platform.isIOS);
+              ((Platform.isWindows && end % 64 == 0) ||
+                  (Platform.isIOS && !crossesFlashSectorBoundary));
           await _writeOtaPacket(
             data,
             packet,
