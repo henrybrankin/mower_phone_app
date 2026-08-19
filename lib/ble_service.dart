@@ -382,6 +382,9 @@ class MowerBleService {
             packet,
             withoutResponse: !requiresFlowControl,
           );
+          if (Platform.isIOS && crossesFlashSectorBoundary) {
+            await Future<void>.delayed(const Duration(milliseconds: 200));
+          }
           offset = end;
         } while (offset < payload.length &&
             offset - windowStart < acknowledgementWindowBytes);
