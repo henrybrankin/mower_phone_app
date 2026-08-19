@@ -365,15 +365,16 @@ class MowerBleService {
             ..._uint32Le(offset),
             ...payload.sublist(offset, end),
           ];
-          // WinRT's MTU-23 path needs explicit controller flow control. This
-          // 64-byte cadence is the configuration proven over a complete image.
-          // iOS keeps the faster no-response path and can use its larger MTU.
-          final requiresWindowsFlowControl =
-              Platform.isWindows && startCommand != 0x01 && end % 64 == 0;
+          // WinRT's MTU-23 path uses the proven 64-byte flow-control cadence.
+          // iOS acknowledges each much larger packet so flash programming can
+          // keep pace without losing a fragment.
+          final requiresFlowControl =
+              startCommand != 0x01 &&
+              ((Platform.isWindows && end % 64 == 0) || Platform.isIOS);
           await _writeOtaPacket(
             data,
             packet,
-            withoutResponse: !requiresWindowsFlowControl,
+            withoutResponse: !requiresFlowControl,
           );
           offset = end;
         } while (offset < payload.length &&
