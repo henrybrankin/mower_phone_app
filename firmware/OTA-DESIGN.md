@@ -13,6 +13,9 @@ Sense Rev2:
 5. The relocated Arduino mower firmware starts normally, advertises over BLE,
    reports firmware version `0.1.0`, and communicates with the Flutter app.
 6. The normal Arduino USB serial interface returns as COM3 after startup.
+7. `firmware/build_ota.ps1` has been exercised from a clean build and produces
+   a verified BLE image, a structurally checked SAM-BA image, and a SHA-256
+   manifest.
 
 The BLE image-transfer service, swap request, confirmation, and rollback tests
 have not yet been implemented.
@@ -81,11 +84,29 @@ The patch must be applied to the selected MCUboot source before building the
 second stage. It is deliberately stored in the repository because the Zephyr
 workspace under `.tools/` is ignored.
 
+### Nano sensor power and I2C state
+
+MCUboot also leaves the Nano 33 BLE Sense Rev2's internal sensor interface in a
+different state from a direct SAM-BA application start. The internal I2C bus
+still acknowledged all five onboard devices, including the BMI270 at `0x68`,
+but the BMI270 chip-ID register returned `0x20` instead of the required `0x24`.
+The IMU library consequently reported `BMI2_E_DEV_NOT_FOUND`, halted startup,
+and BLE never began advertising.
+
+This was reproduced on two boards. A conventional SAM-BA IMU test succeeded on
+the same spare board, proving the sensor hardware and Arduino library were
+sound. The permanent application startup sequence now explicitly disables the
+internal I2C pull-ups, power-cycles the sensor 3.3 V rail, waits for it to
+settle, and re-enables the pull-ups before calling `IMU.begin()`. With that
+sequence the chip ID returns `0x24`, the IMU initializes, and Flutter connects
+over BLE. Do not remove this reset sequence while MCUboot is the second-stage
+boot manager.
+
 ## Two distributable image types
 
 ### USB/SAM-BA recovery image
 
-Example name: `mower-recovery-v0.2.0.bin`
+Output name: `mower-sam-ba.bin`
 
 Contains MCUboot at relative offset zero followed by a padded gap and the
 MCUboot-format mower image at relative offset `0x10000`. SAM-BA maps the file's
@@ -101,7 +122,7 @@ the stock SAM-BA bootloader below physical `0x10000`.
 
 ### BLE update image
 
-Example name: `mower-update-v0.2.0.bin`
+Output name: `mower-update.bin`
 
 Contains only the MCUboot-format mower application: header, payload, hash, and
 eventually a digital signature. Flutter sends this file to the running mower,
@@ -146,6 +167,13 @@ the red LED rather than Arduino's yellow built-in LED.
 
 ## Safety and recovery rules
 
+- The Arduino is a monitoring, warning, diagnostics, and logging system only.
+  It must have no electrical or mechanical connection capable of changing
+  engine speed, governor position, fuel delivery, or engine shutdown.
+- The operator remains responsible for reducing engine speed/load and shutting
+  the engine down by closing off the fuel supply.
+- Arduino outputs are limited to the siren, local status indication, BLE
+  telemetry, and persistent diagnostic logging.
 - Never erase or program the primary slot from the running application.
 - Reject images that exceed the slot or target a different board/layout.
 - Require a valid digital signature before allowing an update or boot.
@@ -157,10 +185,8 @@ the red LED rather than Arduino's yellow built-in LED.
 
 ## Next milestones
 
-1. Turn the manual build steps into a repeatable script that produces both
-   versioned image types.
-2. Add production signing keys and enable signature enforcement in MCUboot.
-3. Add a BLE update service that can erase and write only the secondary slot.
-4. Add the update controls and progress display to About & Diagnostics.
-5. Test interrupted transfers, interrupted swaps, trial confirmation, rollback,
+1. Add production signing keys and enable signature enforcement in MCUboot.
+2. Add a BLE update service that can erase and write only the secondary slot.
+3. Add the update controls and progress display to About & Diagnostics.
+4. Test interrupted transfers, interrupted swaps, trial confirmation, rollback,
    incompatible images, corrupt images, and low-voltage rejection.

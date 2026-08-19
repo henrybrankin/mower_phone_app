@@ -18,8 +18,13 @@ class MowerBleService {
   BluetoothCharacteristic? _versionChar;
   StreamSubscription<List<ScanResult>>? _scanSub;
   StreamSubscription<BluetoothConnectionState>? _connSub;
+  final _connectionStateController =
+      StreamController<BluetoothConnectionState>.broadcast();
 
-  MowerBleService({this.deviceName = 'MowerXiao'});
+  MowerBleService({this.deviceName = 'MowerEMU'});
+
+  Stream<BluetoothConnectionState> get connectionState =>
+      _connectionStateController.stream;
 
   String get platformName {
     if (Platform.isIOS) return 'iPhone';
@@ -56,7 +61,7 @@ class MowerBleService {
         return;
       case BluetoothAdapterState.unauthorized:
         throw StateError(
-          'Bluetooth access is not authorized. Enable it for Mower Phone in '
+          'Bluetooth access is not authorized. Enable it for Mower EMU in '
           '${Platform.isIOS ? 'iPhone Settings' : 'Windows Settings'}.',
         );
       case BluetoothAdapterState.off:
@@ -141,6 +146,9 @@ class MowerBleService {
     );
 
     _connSub = _device!.connectionState.listen((state) {
+      if (!_connectionStateController.isClosed) {
+        _connectionStateController.add(state);
+      }
       if (state == BluetoothConnectionState.disconnected) {
         _telemetryChar = null;
         _controlChar = null;
@@ -212,5 +220,6 @@ class MowerBleService {
   void dispose() {
     _scanSub?.cancel();
     _connSub?.cancel();
+    _connectionStateController.close();
   }
 }

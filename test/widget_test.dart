@@ -8,7 +8,7 @@ void main() {
   ) async {
     await tester.pumpWidget(const MowerApp());
 
-    expect(find.text('Mower Phone'), findsOneWidget);
+    expect(find.text('Mower EMU'), findsOneWidget);
     expect(find.text('Connect'), findsOneWidget);
     expect(find.text('Zero mower'), findsOneWidget);
     expect(find.text('Status: Disconnected'), findsOneWidget);

@@ -85,6 +85,18 @@ void setup() {
   digitalWrite(LED_BUILTIN, LOW);
   Serial.begin(115200);
 
+  Serial.println("Initializing Wire and IMU");
+  // Re-establish the Nano 33 BLE Sense internal sensor power and I2C pull-up
+  // controls after MCUboot, then give the BMI270 a clean power-on interval.
+  pinMode(PIN_ENABLE_I2C_PULLUP, OUTPUT);
+  pinMode(PIN_ENABLE_SENSORS_3V3, OUTPUT);
+  digitalWrite(PIN_ENABLE_I2C_PULLUP, LOW);
+  digitalWrite(PIN_ENABLE_SENSORS_3V3, LOW);
+  delay(50);
+  digitalWrite(PIN_ENABLE_SENSORS_3V3, HIGH);
+  delay(20);
+  digitalWrite(PIN_ENABLE_I2C_PULLUP, HIGH);
+  delay(50);
   Wire.begin();
   IMU.debug(Serial);
   if (!IMU.begin()) {
@@ -93,12 +105,13 @@ void setup() {
   }
   Serial.println("IMU initialized");
 
+  Serial.println("Initializing BLE");
   if (!BLE.begin()) {
     Serial.println("BLE init failed");
     haltWithBlinkCode(3);
   }
 
-  BLE.setLocalName("MowerXiao");
+  BLE.setLocalName("MowerEMU");
   BLE.setAdvertisedService(mowerService);
 
   mowerService.addCharacteristic(telemetryChar);

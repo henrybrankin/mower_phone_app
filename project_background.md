@@ -1,4 +1,4 @@
-# Mower Phone App Background
+# Mower EMU App Background
 
 ## Problem overview
 
@@ -36,7 +36,7 @@ pickup is not immersed in oil, with a resulting loss of oil pressure.
 - on the mower we plan to use "Arduino Nano 33 BLE Sense Rev 2" microcontroller board. This board has BLE for communication with the phone app, and a 9-axis inertial measurement unit that will enable us to determine the pitch and roll of the mower.
 - Project layout:
   - Flutter app code lives in `lib/`
-  - Mower firmware code lives in `firmware/mower_mcu/`
+  - EMU firmware code lives in `firmware/mower_mcu/`
 
 ## Important design decisions
 

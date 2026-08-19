@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:window_size/window_size.dart';
 
 import 'about_diagnostics_screen.dart';
@@ -12,7 +13,7 @@ void main() {
   WidgetsFlutterBinding.ensureInitialized();
 
   if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
-    setWindowTitle('Mower Phone');
+    setWindowTitle('Mower EMU');
     const phoneSize = Size(390, 844);
     setWindowMinSize(phoneSize);
     setWindowMaxSize(phoneSize);
@@ -28,7 +29,7 @@ class MowerApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Mower Phone',
+      title: 'Mower EMU',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.green.shade700),
         useMaterial3: true,
@@ -45,19 +46,46 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+  static const _telemetryTimeout = Duration(seconds: 3);
+
   final _bleService = MowerBleService();
   StreamSubscription<List<int>>? _bleSub;
+  StreamSubscription<BluetoothConnectionState>? _connectionSub;
+  Timer? _telemetryWatchdog;
+  DateTime? _lastTelemetryAt;
   TelemetryData? _last;
   bool _connected = false;
+  bool _handlingConnectionLoss = false;
   String? _firmwareVersion;
   String _status = 'Disconnected';
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _connectionSub = _bleService.connectionState.listen((state) {
+      if (state == BluetoothConnectionState.disconnected && _connected) {
+        unawaited(_handleConnectionLoss('Bluetooth connection closed'));
+      }
+    });
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _telemetryWatchdog?.cancel();
     _bleSub?.cancel();
+    _connectionSub?.cancel();
     _bleService.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _checkTelemetryFreshness();
+    }
   }
 
   Future<void> _connect() async {
@@ -74,9 +102,11 @@ class _HomeScreenState extends State<HomeScreen> {
       _bleSub = _bleService.subscribeTelemetry().listen(
         _onTelemetryReceived,
         onError: (error) {
-          setState(() => _status = 'Telemetry error: $error');
+          unawaited(_handleConnectionLoss('Telemetry error: $error'));
         },
       );
+      _lastTelemetryAt = DateTime.now();
+      _startTelemetryWatchdog();
       setState(() => _connected = true);
     } catch (error) {
       setState(() => _status = 'Connect failed: $error');
@@ -84,6 +114,9 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _disconnect() async {
+    _telemetryWatchdog?.cancel();
+    _telemetryWatchdog = null;
+    _lastTelemetryAt = null;
     await _bleSub?.cancel();
     _bleSub = null;
     await _bleService.disconnect();
@@ -97,6 +130,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _onTelemetryReceived(List<int> bytes) {
     if (bytes.length < 4) return;
+
+    _lastTelemetryAt = DateTime.now();
 
     final roll = bytes[0].toSigned(8);
     final pitch = bytes[1].toSigned(8);
@@ -112,6 +147,51 @@ class _HomeScreenState extends State<HomeScreen> {
         oilTemp: temp,
       );
     });
+  }
+
+  void _startTelemetryWatchdog() {
+    _telemetryWatchdog?.cancel();
+    _telemetryWatchdog = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => _checkTelemetryFreshness(),
+    );
+  }
+
+  void _checkTelemetryFreshness() {
+    final lastTelemetryAt = _lastTelemetryAt;
+    if (!_connected || lastTelemetryAt == null) return;
+
+    if (DateTime.now().difference(lastTelemetryAt) > _telemetryTimeout) {
+      unawaited(_handleConnectionLoss('No telemetry received'));
+    }
+  }
+
+  Future<void> _handleConnectionLoss(String reason) async {
+    if (_handlingConnectionLoss || !_connected) return;
+    _handlingConnectionLoss = true;
+
+    _telemetryWatchdog?.cancel();
+    _telemetryWatchdog = null;
+    _lastTelemetryAt = null;
+
+    if (mounted) {
+      setState(() {
+        _connected = false;
+        _status = 'Connection lost: $reason';
+        _last = null;
+        _firmwareVersion = null;
+      });
+    }
+
+    await _bleSub?.cancel();
+    _bleSub = null;
+    try {
+      await _bleService.disconnect();
+    } catch (_) {
+      // The peripheral may already have disappeared after an abrupt reset.
+    } finally {
+      _handlingConnectionLoss = false;
+    }
   }
 
   Future<void> _requestZero() async {
@@ -160,7 +240,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Mower Phone'),
+        title: const Text('Mower EMU'),
         centerTitle: true,
         actions: [
           IconButton(
@@ -266,22 +346,13 @@ class StatusPanel extends StatelessWidget {
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'Mower',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 6),
                 Text(
                   connected ? 'Connected' : 'Disconnected',
                   style: const TextStyle(color: Colors.white70),
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  'Firmware: ${firmwareVersion ?? 'Unknown'}',
+                  'EMU firmware: ${firmwareVersion ?? 'Unknown'}',
                   style: const TextStyle(color: Colors.white70, fontSize: 12),
                 ),
               ],

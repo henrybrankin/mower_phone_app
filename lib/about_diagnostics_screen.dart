@@ -40,7 +40,7 @@ class _AboutDiagnosticsScreenState extends State<AboutDiagnosticsScreen> {
         padding: const EdgeInsets.all(12),
         children: [
           _SectionCard(
-            title: 'Phone app',
+            title: 'Mower EMU app',
             children: [
               FutureBuilder<PackageInfo>(
                 future: _packageInfo,
@@ -64,7 +64,7 @@ class _AboutDiagnosticsScreenState extends State<AboutDiagnosticsScreen> {
           ),
           const SizedBox(height: 12),
           _SectionCard(
-            title: 'Mower connection',
+            title: 'Mower EMU connection',
             children: [
               _DiagnosticRow(
                 icon: Icons.bluetooth,
@@ -78,7 +78,7 @@ class _AboutDiagnosticsScreenState extends State<AboutDiagnosticsScreen> {
               ),
               _DiagnosticRow(
                 icon: Icons.memory,
-                label: 'Mower firmware',
+                label: 'EMU firmware',
                 value: widget.mowerFirmwareVersion ?? 'Unknown',
               ),
             ],

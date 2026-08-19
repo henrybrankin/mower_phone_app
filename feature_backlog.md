@@ -1,4 +1,4 @@
-# Mower Phone App Feature Backlog
+# Mower EMU App Feature Backlog
 
 ## Time sync and event log
 
