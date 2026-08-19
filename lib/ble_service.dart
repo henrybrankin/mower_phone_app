@@ -319,7 +319,7 @@ class MowerBleService {
     final mtu = _device?.mtuNow ?? 23;
     var payloadBytesPerChunk = (mtu - 7).clamp(16, 240).toInt();
     payloadBytesPerChunk -= payloadBytesPerChunk % 4;
-    const acknowledgementWindowBytes = 256;
+    final acknowledgementWindowBytes = Platform.isIOS ? 3840 : 256;
     final start = <int>[
       startCommand,
       ..._uint32Le(payload.length),
@@ -351,12 +351,14 @@ class MowerBleService {
             (windowStart + acknowledgementWindowBytes < payload.length)
             ? windowStart + acknowledgementWindowBytes
             : payload.length;
-        statusFuture = _waitForOtaWindowStatus(
-          status,
-          expectedBytes: payload.length,
-          windowStart: windowStart,
-          windowTarget: windowTarget,
-        );
+        if (!Platform.isIOS) {
+          statusFuture = _waitForOtaWindowStatus(
+            status,
+            expectedBytes: payload.length,
+            windowStart: windowStart,
+            windowTarget: windowTarget,
+          );
+        }
         do {
           final end = (offset + payloadBytesPerChunk < payload.length)
               ? offset + payloadBytesPerChunk
@@ -380,7 +382,9 @@ class MowerBleService {
         } while (offset < payload.length &&
             offset - windowStart < acknowledgementWindowBytes);
 
-        current = await statusFuture;
+        current = Platform.isIOS
+            ? await _readOtaStatusWithRetry(status)
+            : await statusFuture;
         _requireOtaStatus(
           current,
           expectedState: 1,
@@ -455,6 +459,25 @@ class MowerBleService {
       }
     }
     throw StateError('BLE write failed after 3 attempts: $lastError');
+  }
+
+  static Future<_OtaStatus> _readOtaStatusWithRetry(
+    BluetoothCharacteristic characteristic,
+  ) async {
+    Object? lastError;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        return _parseOtaStatus(await characteristic.read());
+      } catch (error) {
+        lastError = error;
+        if (attempt < 2) {
+          await Future<void>.delayed(
+            Duration(milliseconds: 100 * (attempt + 1)),
+          );
+        }
+      }
+    }
+    throw StateError('BLE status read failed after 3 attempts: $lastError');
   }
 
   static List<int> _uint32Le(int value) => [
