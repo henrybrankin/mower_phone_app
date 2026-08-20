@@ -523,7 +523,7 @@ class MowerBleService {
       .map(_parseOtaStatus)
       .where(matches)
       .first
-      .timeout(const Duration(seconds: 30));
+      .timeout(const Duration(seconds: 60));
 
   static Future<_OtaStatus> _waitForOtaWindowStatus(
     BluetoothCharacteristic characteristic, {
@@ -573,7 +573,7 @@ class MowerBleService {
     );
 
     try {
-      return await completer.future.timeout(const Duration(seconds: 30));
+      return await completer.future.timeout(const Duration(seconds: 60));
     } finally {
       settleTimer?.cancel();
       await subscription.cancel();

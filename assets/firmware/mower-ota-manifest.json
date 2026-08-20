@@ -2,17 +2,17 @@
     "firmwareVersion":  "0.1.0",
     "board":  "arduino-nano-33-ble-sense-rev2",
     "flashLayout":  "mower-ota-v1",
-    "createdUtc":  "2026-08-19T23:55:54.0545938Z",
+    "createdUtc":  "2026-08-20T00:03:09.6756224Z",
     "update":  {
                    "file":  "mower-update.bin",
-                   "size":  366872,
-                   "sha256":  "44cff1af971b71c3d03c7135cf3a1d79ace1b6396ca6e6454ee2c7fc3474bb31",
+                   "size":  366936,
+                   "sha256":  "1d340d68d327e944e96d006ff9e5a376cde63a4ce0952c47d664230a48095f7f",
                    "destination":  "secondary-slot-0x8e000"
                },
     "samBa":  {
                   "file":  "mower-sam-ba.bin",
-                  "size":  432408,
-                  "sha256":  "d727f3ce884df28f0d9ab50f12bdf65c7ccfb5d5beaf955ade1306cd6d6e73c3",
+                  "size":  432472,
+                  "sha256":  "5f4d4697b458e6e296cd679133451b73f7525709ca707e4dacd64edc3a8494d1",
                   "destination":  "sam-ba-upload-at-0x10000"
               }
 }

@@ -70,6 +70,7 @@ bool g_flashInitialized = false;
 uint32_t g_otaNextSectorEraseAddress = kSecondarySlotAddress;
 unsigned long g_otaLastStatusMillis = 0;
 unsigned long g_otaLastTelemetryMillis = 0;
+unsigned long g_otaNextEraseMillis = 0;
 mbed::FlashIAP g_flash;
 
 static void haltWithBlinkCode(uint8_t blinkCount) {
@@ -232,6 +233,11 @@ static bool eraseNextOtaSector() {
     return true;
   }
 
+  const unsigned long now = millis();
+  if (static_cast<long>(now - g_otaNextEraseMillis) < 0) {
+    return true;
+  }
+
   const uint32_t slotEnd = kSecondarySlotAddress + kSecondarySlotSize;
   const uint32_t sectorSize =
       g_flash.get_sector_size(g_otaNextSectorEraseAddress);
@@ -242,6 +248,7 @@ static bool eraseNextOtaSector() {
     return false;
   }
   g_otaNextSectorEraseAddress += sectorSize;
+  g_otaNextEraseMillis = millis() + 100;
   return true;
 }
 
@@ -320,6 +327,7 @@ static void handleOtaControl(BLEDevice, BLECharacteristic) {
       g_otaReceivedBytes = 0;
       g_otaRunningCrc = 0xFFFFFFFFu;
       g_otaLastPublishedBytes = 0;
+      g_otaNextEraseMillis = 0;
       g_otaWritesFlash = value[0] == 0x04 || value[0] == 0x05;
       g_otaStagesFullImage = value[0] == 0x05;
       if (g_otaExpectedBytes == 0 ||
