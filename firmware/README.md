@@ -123,7 +123,7 @@ image in 638 seconds (574 B/s); telemetry resumed normally afterward.
 If BLE disconnects during an OTA session, the firmware aborts that session and
 re-erases the partial slot before advertising again. The next connection can
 therefore restart from zero and receives normal telemetry without a board reset.
-Full-image staging on iPhone currently uses conservative 32-byte fragments,
-64-byte acknowledged flow control, and 4096-byte offset checks. The preceding
-16-byte configuration transferred 367192 bytes successfully in 381 seconds
-(963 B/s).
+Full-image staging on iPhone currently tests 64-byte fragments, 128-byte
+acknowledged flow control, and 4096-byte offset checks. The preceding
+32-byte/64-byte configuration transferred 367192 bytes successfully in 371
+seconds (989 B/s).
