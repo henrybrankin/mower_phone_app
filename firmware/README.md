@@ -101,7 +101,9 @@ roughly 256-byte windows. Diagnostics show the measured duration, throughput,
 MTU, and chosen payload size.
 
 The separately confirmed **Stage bundled firmware** action writes the complete
-embedded MCUboot image to the secondary slot with progressive sector erasure.
+embedded MCUboot image to the secondary slot. Firmware startup erases that slot
+before BLE advertising begins, avoiding blocking erase operations while a phone
+is connected.
 The Arduino verifies both streaming and flash-readback CRC-32 and checks the
 MCUboot header and TLV. It deliberately does not mark the image pending, reboot,
 or activate it; activation is a later milestone. The full path was
@@ -110,8 +112,8 @@ seconds (572 B/s).
 
 The current reliable transport also retries uncertain Windows writes, resumes
 from stable Arduino-reported offsets, and repeats transfer credits. Normal
-telemetry is stopped while OTA prepares or writes the secondary slot to avoid
-BLE contention. During that interval Flutter suspends its telemetry-freshness
+telemetry is stopped while OTA writes the secondary slot to avoid BLE
+contention. During that interval Flutter suspends its telemetry-freshness
 watchdog but continues to monitor BLE connection events and OTA status/timeouts.
 Direct per-fragment flash programming is intentional: larger buffered FlashIAP
 operations caused ArduinoBLE disconnections in hardware tests. Normal 50 Hz
@@ -119,4 +121,8 @@ telemetry and its freshness watchdog resume when the transfer ends.
 This telemetry-silent path was hardware-verified on Windows with the 366936-byte
 image in 638 seconds (574 B/s); telemetry resumed normally afterward.
 If BLE disconnects during an OTA session, the firmware aborts that session and
-restores telemetry so the next connection is usable without resetting the board.
+re-erases the partial slot before advertising again. The next connection can
+therefore restart from zero and receives normal telemetry without a board reset.
+Full-image staging on iPhone currently uses conservative 16-byte fragments,
+64-byte acknowledged flow control, and 256-byte offset checks to prioritise
+reliability before throughput optimisation.

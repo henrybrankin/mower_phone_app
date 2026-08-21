@@ -55,6 +55,7 @@ enum OtaResult : uint8_t {
   kOtaResultFlashProgramFailed = 10,
   kOtaResultFlashReadbackFailed = 11,
   kOtaResultInvalidImage = 12,
+  kOtaResultSlotNotPrepared = 13,
 };
 
 uint8_t g_otaState = kOtaIdle;
@@ -68,9 +69,9 @@ bool g_otaWritesFlash = false;
 bool g_otaStagesFullImage = false;
 bool g_otaTelemetryPaused = false;
 bool g_flashInitialized = false;
+bool g_secondarySlotBlank = false;
 uint32_t g_otaNextSectorEraseAddress = kSecondarySlotAddress;
 unsigned long g_otaLastStatusMillis = 0;
-unsigned long g_otaNextEraseMillis = 0;
 mbed::FlashIAP g_flash;
 
 static void haltWithBlinkCode(uint8_t blinkCount) {
@@ -187,6 +188,37 @@ static void setOtaError(uint8_t result) {
   publishOtaStatus();
 }
 
+static bool eraseSecondarySlot() {
+  if (!g_flashInitialized) {
+    if (g_flash.init() != 0) {
+      return false;
+    }
+    g_flashInitialized = true;
+  }
+
+  const uint32_t flashStart = g_flash.get_flash_start();
+  const uint32_t flashSize = g_flash.get_flash_size();
+  const uint32_t slotEnd = kSecondarySlotAddress + kSecondarySlotSize;
+  if (kSecondarySlotAddress < flashStart ||
+      slotEnd > flashStart + flashSize) {
+    return false;
+  }
+
+  uint32_t address = kSecondarySlotAddress;
+  while (address < slotEnd) {
+    const uint32_t sectorSize = g_flash.get_sector_size(address);
+    if (sectorSize == 0 || address + sectorSize > slotEnd ||
+        g_flash.erase(address, sectorSize) != 0) {
+      return false;
+    }
+    address += sectorSize;
+  }
+
+  g_otaNextSectorEraseAddress = slotEnd;
+  g_secondarySlotBlank = true;
+  return true;
+}
+
 static bool prepareFlashTransfer(bool fullImage) {
   if (!g_flashInitialized) {
     if (g_flash.init() != 0) {
@@ -211,8 +243,14 @@ static bool prepareFlashTransfer(bool fullImage) {
     setOtaError(kOtaResultFlashLayoutInvalid);
     return false;
   }
-  g_otaNextSectorEraseAddress = kSecondarySlotAddress;
-  if (!fullImage) {
+  if (fullImage) {
+    if (!g_secondarySlotBlank) {
+      setOtaError(kOtaResultSlotNotPrepared);
+      return false;
+    }
+    g_otaNextSectorEraseAddress = kSecondarySlotAddress + kSecondarySlotSize;
+  } else {
+    g_otaNextSectorEraseAddress = kSecondarySlotAddress;
     if (g_flash.erase(kSecondarySlotAddress, sectorSize) != 0) {
       setOtaError(kOtaResultFlashEraseFailed);
       return false;
@@ -236,33 +274,6 @@ static bool eraseFlashThrough(uint32_t exclusiveOffset) {
     }
     g_otaNextSectorEraseAddress += sectorSize;
   }
-  return true;
-}
-
-static bool eraseNextOtaSector() {
-  const uint32_t requiredEnd = kSecondarySlotAddress + g_otaExpectedBytes;
-  if (g_otaNextSectorEraseAddress >= requiredEnd) {
-    g_otaState = kOtaReceiving;
-    publishOtaStatus();
-    return true;
-  }
-
-  const unsigned long now = millis();
-  if (static_cast<long>(now - g_otaNextEraseMillis) < 0) {
-    return true;
-  }
-
-  const uint32_t slotEnd = kSecondarySlotAddress + kSecondarySlotSize;
-  const uint32_t sectorSize =
-      g_flash.get_sector_size(g_otaNextSectorEraseAddress);
-  if (sectorSize == 0 ||
-      g_otaNextSectorEraseAddress + sectorSize > slotEnd ||
-      g_flash.erase(g_otaNextSectorEraseAddress, sectorSize) != 0) {
-    setOtaError(kOtaResultFlashEraseFailed);
-    return false;
-  }
-  g_otaNextSectorEraseAddress += sectorSize;
-  g_otaNextEraseMillis = millis() + 100;
   return true;
 }
 
@@ -341,7 +352,6 @@ static void handleOtaControl(BLEDevice, BLECharacteristic) {
       g_otaReceivedBytes = 0;
       g_otaRunningCrc = 0xFFFFFFFFu;
       g_otaLastPublishedBytes = 0;
-      g_otaNextEraseMillis = 0;
       g_otaWritesFlash = value[0] == 0x04 || value[0] == 0x05;
       g_otaStagesFullImage = value[0] == 0x05;
       if (g_otaExpectedBytes == 0 ||
@@ -370,7 +380,10 @@ static void handleOtaControl(BLEDevice, BLECharacteristic) {
         return;
       }
       g_otaTelemetryPaused = true;
-      g_otaState = g_otaStagesFullImage ? kOtaPreparing : kOtaReceiving;
+      if (g_otaStagesFullImage) {
+        g_secondarySlotBlank = false;
+      }
+      g_otaState = kOtaReceiving;
       g_otaResult = kOtaResultOk;
       publishOtaStatus();
       break;
@@ -464,6 +477,13 @@ void setup() {
   digitalWrite(LED_BUILTIN, LOW);
   Serial.begin(115200);
 
+  Serial.println("Erasing OTA secondary slot");
+  if (!eraseSecondarySlot()) {
+    Serial.println("OTA secondary slot erase failed");
+    haltWithBlinkCode(4);
+  }
+  Serial.println("OTA secondary slot ready");
+
   Serial.println("Initializing Wire and IMU");
   // Re-establish the Nano 33 BLE Sense internal sensor power and I2C pull-up
   // controls after MCUboot, then give the BMI270 a clean power-on interval.
@@ -529,18 +549,20 @@ void loop() {
     }
   } else if (g_isConnected) {
     g_isConnected = false;
+    const bool interruptedFullImage =
+        g_otaTelemetryPaused && g_otaStagesFullImage;
     if (g_otaTelemetryPaused) {
       // The phone may disappear while flash is busy. Treat that as an aborted
       // transfer so a later connection immediately receives normal telemetry
       // and can start the image again from offset zero.
       resetOtaTransfer();
     }
+    if (interruptedFullImage && !eraseSecondarySlot()) {
+      Serial.println("OTA secondary slot recovery erase failed");
+      haltWithBlinkCode(4);
+    }
     Serial.println("Disconnected");
     BLE.advertise();
-  }
-
-  if (g_otaState == kOtaPreparing && !eraseNextOtaSector()) {
-    return;
   }
 
   if (g_otaState == kOtaReceiving &&

@@ -322,7 +322,17 @@ class MowerBleService {
     final mtu = _device?.mtuNow ?? 23;
     var payloadBytesPerChunk = (mtu - 7).clamp(16, 240).toInt();
     payloadBytesPerChunk -= payloadBytesPerChunk % 4;
-    final acknowledgementWindowBytes = Platform.isIOS ? 3840 : 256;
+    final conservativeIosFlashTransport =
+        Platform.isIOS && startCommand == 0x05;
+    if (conservativeIosFlashTransport) {
+      // A 240-byte acknowledged write can hold the Arduino BLE handler while
+      // the nRF52840 programs internal flash. Start with the proven Windows
+      // cadence, even though iOS negotiated a much larger MTU.
+      payloadBytesPerChunk = 16;
+    }
+    final acknowledgementWindowBytes = conservativeIosFlashTransport
+        ? 256
+        : (Platform.isIOS ? 3840 : 256);
     final start = <int>[
       startCommand,
       ..._uint32Le(payload.length),
@@ -371,12 +381,14 @@ class MowerBleService {
             ..._uint32Le(offset),
             ...payload.sublist(offset, end),
           ];
-          // WinRT's MTU-23 path uses the proven 64-byte flow-control cadence.
-          // iOS acknowledges each larger packet; the Arduino has already
-          // completed all sector erases before entering the receiving state.
+          // Full-image writes on iOS initially use the same conservative
+          // 16-byte/64-byte cadence proven by WinRT. Other iOS transport tests
+          // retain their larger acknowledged packets.
           final requiresFlowControl =
               startCommand != 0x01 &&
-              ((Platform.isWindows && end % 64 == 0) || Platform.isIOS);
+              ((Platform.isWindows && end % 64 == 0) ||
+                  (conservativeIosFlashTransport && end % 64 == 0) ||
+                  (Platform.isIOS && !conservativeIosFlashTransport));
           await _writeOtaPacket(
             data,
             packet,

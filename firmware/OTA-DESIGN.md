@@ -234,9 +234,10 @@ secondary slot.
 
 Control command `0x05` stages the bundled `mower-update.bin` across the full
 secondary slot. The firmware validates the fixed slot boundary and flash
-program alignment, then erases sectors progressively immediately before they
-are written. The phone supplies only ordered image bytes; it cannot select a
-flash address.
+program alignment. The complete secondary slot is erased during firmware
+startup, before BLE begins advertising, so connected-time staging performs
+program operations only. The phone supplies only ordered image bytes; it cannot
+select a flash address.
 
 At finish, the firmware compares the streaming CRC-32, reads the complete image
 back from flash and independently checks its CRC-32, then validates the MCUboot
@@ -251,15 +252,14 @@ test leaves the currently running firmware unchanged.
 staging that embedded image.
 
 This path was hardware-verified on Windows on 2026-08-19 with firmware 0.1.0:
-all 366680 bytes were staged and verified successfully. Acknowledged writes at
-each 4 KiB erase boundary and every 64 transferred bytes provide the flow
-control needed to avoid overrunning the Arduino BLE receive queue while flash
-operations are in progress.
+all 366680 bytes were staged and verified successfully. Acknowledged writes
+provide the flow control needed to avoid overrunning the Arduino BLE receive
+queue while flash program operations are in progress.
 
 A later reliability pass retained direct, aligned per-fragment flash writes,
 added recoverable offset acknowledgements, repeated active-transfer status,
 and bounded Flutter write retries. Normal telemetry is now stopped completely
-while the secondary slot is being prepared or written, and Flutter suspends its
+while the secondary slot is being written, and Flutter suspends its
 telemetry-freshness watchdog for the transfer. BLE connection-state events and
 the OTA status/timeouts remain active. Buffering larger flash writes was
 rejected after hardware tests showed it could starve ArduinoBLE and make the
@@ -271,9 +271,15 @@ The telemetry-silent transfer was hardware-verified on Windows on 2026-08-21:
 all 366936 bytes staged and verified in 638 seconds (574 B/s), and normal
 telemetry resumed after completion.
 
-If the BLE central disconnects during preparation or transfer, the firmware
-aborts the OTA session back to idle. A later connection therefore receives
-normal telemetry immediately and may restart staging from offset zero.
+If the BLE central disconnects during a transfer, the firmware aborts the OTA
+session, re-erases the partial secondary image while disconnected, and only
+then resumes advertising. A later connection therefore receives normal
+telemetry immediately and may restart staging from offset zero.
+
+For reliability testing, iPhone full-image staging deliberately uses 16-byte
+data fragments, an acknowledged write every 64 bytes, and an Arduino offset
+check every 256 bytes. This matches the cadence already proven on Windows while
+leaving the larger iOS MTU available for later optimisation.
 
 ## Current LED diagnostics
 
