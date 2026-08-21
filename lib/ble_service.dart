@@ -326,9 +326,9 @@ class MowerBleService {
         Platform.isIOS && startCommand == 0x05;
     if (conservativeIosFlashTransport) {
       // A 240-byte acknowledged write can hold the Arduino BLE handler while
-      // the nRF52840 programs internal flash. Start with the proven Windows
-      // cadence, even though iOS negotiated a much larger MTU.
-      payloadBytesPerChunk = 16;
+      // the nRF52840 programs internal flash. Increase the proven small-write
+      // path cautiously even though iOS negotiated a much larger MTU.
+      payloadBytesPerChunk = 32;
     }
     final acknowledgementWindowBytes = conservativeIosFlashTransport
         ? 4096
@@ -381,9 +381,9 @@ class MowerBleService {
             ..._uint32Le(offset),
             ...payload.sublist(offset, end),
           ];
-          // Full-image writes on iOS initially use the same conservative
-          // 16-byte/64-byte cadence proven by WinRT. Other iOS transport tests
-          // retain their larger acknowledged packets.
+          // Full-image writes on iOS use small fragments with 64-byte flow
+          // control. Other iOS transport tests retain larger acknowledged
+          // packets.
           final requiresFlowControl =
               startCommand != 0x01 &&
               ((Platform.isWindows && end % 64 == 0) ||

@@ -276,12 +276,13 @@ session, re-erases the partial secondary image while disconnected, and only
 then resumes advertising. A later connection therefore receives normal
 telemetry immediately and may restart staging from offset zero.
 
-For reliability testing, iPhone full-image staging deliberately uses 16-byte
+For reliability testing, iPhone full-image staging now uses 32-byte
 data fragments, an acknowledged write every 64 bytes, and an Arduino offset
 check every 4096 bytes. The 16-byte/64-byte cadence completed a 367192-byte
 transfer in 467 seconds (786 B/s) with 256-byte checks and 395 seconds (929 B/s)
-with 1024-byte checks. Increasing only the check interval remains the next
-controlled optimisation.
+with 1024-byte checks. With 4096-byte checks it completed in 381 seconds
+(963 B/s). Increasing only the fragment size to 32 bytes is the next controlled
+optimisation.
 
 ## Current LED diagnostics
 
