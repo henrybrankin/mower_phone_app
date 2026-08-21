@@ -118,3 +118,5 @@ operations caused ArduinoBLE disconnections in hardware tests. Normal 50 Hz
 telemetry and its freshness watchdog resume when the transfer ends.
 This telemetry-silent path was hardware-verified on Windows with the 366936-byte
 image in 638 seconds (574 B/s); telemetry resumed normally afterward.
+If BLE disconnects during an OTA session, the firmware aborts that session and
+restores telemetry so the next connection is usable without resetting the board.

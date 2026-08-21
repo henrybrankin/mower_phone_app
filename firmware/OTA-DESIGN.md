@@ -271,6 +271,10 @@ The telemetry-silent transfer was hardware-verified on Windows on 2026-08-21:
 all 366936 bytes staged and verified in 638 seconds (574 B/s), and normal
 telemetry resumed after completion.
 
+If the BLE central disconnects during preparation or transfer, the firmware
+aborts the OTA session back to idle. A later connection therefore receives
+normal telemetry immediately and may restart staging from offset zero.
+
 ## Current LED diagnostics
 
 The Arduino mower sketch uses the yellow `LED_BUILTIN` during startup:

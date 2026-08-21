@@ -167,6 +167,19 @@ static void publishOtaStatus() {
   g_otaLastStatusMillis = millis();
 }
 
+static void resetOtaTransfer() {
+  g_otaState = kOtaIdle;
+  g_otaResult = kOtaResultOk;
+  g_otaExpectedBytes = 0;
+  g_otaReceivedBytes = 0;
+  g_otaExpectedCrc = 0;
+  g_otaRunningCrc = 0xFFFFFFFFu;
+  g_otaLastPublishedBytes = 0;
+  g_otaWritesFlash = false;
+  g_otaStagesFullImage = false;
+  g_otaTelemetryPaused = false;
+}
+
 static void setOtaError(uint8_t result) {
   g_otaState = kOtaError;
   g_otaResult = result;
@@ -382,16 +395,7 @@ static void handleOtaControl(BLEDevice, BLECharacteristic) {
       break;
 
     case 0x03:
-      g_otaState = kOtaIdle;
-      g_otaResult = kOtaResultOk;
-      g_otaExpectedBytes = 0;
-      g_otaReceivedBytes = 0;
-      g_otaExpectedCrc = 0;
-      g_otaRunningCrc = 0xFFFFFFFFu;
-      g_otaLastPublishedBytes = 0;
-      g_otaWritesFlash = false;
-      g_otaStagesFullImage = false;
-      g_otaTelemetryPaused = false;
+      resetOtaTransfer();
       publishOtaStatus();
       break;
 
@@ -517,6 +521,24 @@ void setup() {
 void loop() {
   BLEDevice central = BLE.central();
 
+  if (central) {
+    if (!g_isConnected) {
+      g_isConnected = true;
+      Serial.println("Connected");
+      BLE.stopAdvertise();
+    }
+  } else if (g_isConnected) {
+    g_isConnected = false;
+    if (g_otaTelemetryPaused) {
+      // The phone may disappear while flash is busy. Treat that as an aborted
+      // transfer so a later connection immediately receives normal telemetry
+      // and can start the image again from offset zero.
+      resetOtaTransfer();
+    }
+    Serial.println("Disconnected");
+    BLE.advertise();
+  }
+
   if (g_otaState == kOtaPreparing && !eraseNextOtaSector()) {
     return;
   }
@@ -526,18 +548,6 @@ void loop() {
     // Credit/status notifications are idempotent. Repeat the latest offset so
     // a single lost BLE notification cannot stall a long transfer forever.
     publishOtaStatus();
-  }
-
-  if (central) {
-    if (!g_isConnected) {
-      g_isConnected = true;
-      Serial.println("Connected");
-      BLE.stopAdvertise();
-    }
-  } else if (g_isConnected) {
-    g_isConnected = false;
-    Serial.println("Disconnected");
-    BLE.advertise();
   }
 
   unsigned long now = millis();
