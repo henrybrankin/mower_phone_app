@@ -328,7 +328,7 @@ class MowerBleService {
       // A 240-byte acknowledged write can hold the Arduino BLE handler while
       // the nRF52840 programs internal flash. Increase the proven small-write
       // path cautiously even though iOS negotiated a much larger MTU.
-      payloadBytesPerChunk = 64;
+      payloadBytesPerChunk = 128;
     }
     final acknowledgementWindowBytes = conservativeIosFlashTransport
         ? 4096
@@ -387,7 +387,7 @@ class MowerBleService {
           final requiresFlowControl =
               startCommand != 0x01 &&
               ((Platform.isWindows && end % 64 == 0) ||
-                  (conservativeIosFlashTransport && end % 128 == 0) ||
+                  (conservativeIosFlashTransport && end % 256 == 0) ||
                   (Platform.isIOS && !conservativeIosFlashTransport));
           await _writeOtaPacket(
             data,
