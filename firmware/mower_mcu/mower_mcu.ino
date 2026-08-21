@@ -14,7 +14,7 @@
 #define OTA_DATA_CHAR_UUID        "12345678-1234-5678-1234-56789abcdef5"
 #define OTA_STATUS_CHAR_UUID      "12345678-1234-5678-1234-56789abcdef6"
 
-const char kFirmwareVersion[] = "0.1.0";
+const char kFirmwareVersion[] = "0.1.1";
 
 bool g_isConnected = false;
 bool g_zeroCommandReceived = false;
@@ -25,6 +25,8 @@ float g_rollZeroOffset = 0.0f;
 float g_pitchZeroOffset = 0.0f;
 float g_headingDeg = 0.0f;
 bool g_headingValid = false;
+char g_serialCommand[32];
+size_t g_serialCommandLength = 0;
 const unsigned long kUpdateIntervalMs = 20;
 const float kComplementaryAlpha = 0.95f;
 const float kHeadingAlpha = 0.2f;
@@ -122,6 +124,31 @@ static void updateHeadingFromMag(float mx, float my, float mz, float rollDeg, fl
     delta += 360.0f;
   }
   g_headingDeg = wrapHeading360(g_headingDeg + (kHeadingAlpha * delta));
+}
+
+static void serviceSerialCommands() {
+  while (Serial.available() > 0) {
+    const char value = static_cast<char>(Serial.read());
+    if (value == '\r' || value == '\n') {
+      if (g_serialCommandLength > 0) {
+        g_serialCommand[g_serialCommandLength] = '\0';
+        if (strcmp(g_serialCommand, "MOWER_EMU?") == 0) {
+          char response[96];
+          snprintf(response, sizeof(response),
+                   "MOWER_EMU/1 FW=%s ID=%08lX%08lX", kFirmwareVersion,
+                   static_cast<unsigned long>(NRF_FICR->DEVICEADDR[1]),
+                   static_cast<unsigned long>(NRF_FICR->DEVICEADDR[0]));
+          Serial.println(response);
+        }
+        g_serialCommandLength = 0;
+      }
+    } else if (g_serialCommandLength < sizeof(g_serialCommand) - 1) {
+      g_serialCommand[g_serialCommandLength++] = value;
+    } else {
+      // Discard an oversized or binary command without blocking the main loop.
+      g_serialCommandLength = 0;
+    }
+  }
 }
 
 static uint32_t readUint32Le(const uint8_t* bytes) {
@@ -539,6 +566,7 @@ void setup() {
 }
 
 void loop() {
+  serviceSerialCommands();
   BLEDevice central = BLE.central();
 
   if (central) {

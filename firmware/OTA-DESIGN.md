@@ -11,7 +11,7 @@ Sense Rev2:
 3. MCUboot validates an image in the primary slot and starts it at `0x20000`.
 4. A relocated Zephyr LED test ran successfully.
 5. The relocated Arduino mower firmware starts normally, advertises over BLE,
-   reports firmware version `0.1.0`, and communicates with the Flutter app.
+   reports firmware version `0.1.1`, and communicates with the Flutter app.
 6. The normal Arduino USB serial interface returns as COM3 after startup.
 7. `firmware/build_ota.ps1` has been exercised from a clean build and produces
    a verified BLE image, a structurally checked SAM-BA image, and a SHA-256

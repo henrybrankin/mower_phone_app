@@ -1,8 +1,11 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
+    [Parameter(Mandatory = $true, ParameterSetName = 'Port')]
     [ValidatePattern('^COM\d+$')]
     [string]$Port,
+
+    [Parameter(Mandatory = $true, ParameterSetName = 'Auto')]
+    [switch]$Auto,
 
     [string]$ImagePath,
 
@@ -22,6 +25,64 @@ if ([string]::IsNullOrWhiteSpace($ImagePath)) {
 
 function Get-ComPorts {
     return @([System.IO.Ports.SerialPort]::GetPortNames() | Sort-Object)
+}
+
+function Find-MowerEmuPort {
+    $candidates = @(Get-CimInstance Win32_PnPEntity | ForEach-Object {
+        if ($_.PNPDeviceID -match 'VID_2341&PID_805A' -and
+            $_.Name -match '\((COM\d+)\)') {
+            $Matches[1]
+        }
+    } | Sort-Object -Unique)
+    if ($candidates.Count -eq 0) {
+        throw 'No connected Arduino Nano 33 BLE application ports were found.'
+    }
+
+    $emuMatches = @()
+    foreach ($candidate in $candidates) {
+        $serial = [System.IO.Ports.SerialPort]::new($candidate, 115200, [System.IO.Ports.Parity]::None, 8, [System.IO.Ports.StopBits]::One)
+        try {
+            $serial.NewLine = "`n"
+            $serial.ReadTimeout = 200
+            $serial.DtrEnable = $true
+            $serial.Open()
+            Start-Sleep -Milliseconds 100
+            $serial.DiscardInBuffer()
+            $serial.WriteLine('MOWER_EMU?')
+            $deadline = [DateTime]::UtcNow.AddSeconds(2)
+            $received = ''
+            while ([DateTime]::UtcNow -lt $deadline) {
+                $received += $serial.ReadExisting()
+                if ($received -match '(?m)^MOWER_EMU/1 FW=([^ ]+) ID=([0-9A-F]{16})\r?$') {
+                    $emuMatches += [pscustomobject]@{
+                        Port = $candidate
+                        Firmware = $Matches[1]
+                        DeviceId = $Matches[2]
+                    }
+                    break
+                }
+                Start-Sleep -Milliseconds 50
+            }
+        } catch {
+            Write-Verbose "Skipping $candidate`: $($_.Exception.Message)"
+        } finally {
+            if ($serial.IsOpen) {
+                $serial.Close()
+            }
+            $serial.Dispose()
+        }
+    }
+
+    if ($emuMatches.Count -eq 0) {
+        throw "No Nano 33 BLE port answered MOWER_EMU?. Candidates: $($candidates -join ', ')"
+    }
+    if ($emuMatches.Count -gt 1) {
+        $descriptions = @($emuMatches | ForEach-Object { "$($_.Port) ID=$($_.DeviceId)" })
+        throw "Multiple Mower EMUs were found; use -Port explicitly. Matches: $($descriptions -join ', ')"
+    }
+
+    Write-Host "Detected Mower EMU firmware $($emuMatches[0].Firmware), ID $($emuMatches[0].DeviceId), on $($emuMatches[0].Port)."
+    return [string]$emuMatches[0].Port
 }
 
 function Wait-ForPortSetChange {
@@ -72,6 +133,10 @@ $bossac = Get-ChildItem -LiteralPath (Join-Path $env:LOCALAPPDATA 'Arduino15\pac
     -Recurse -Filter bossac.exe | Sort-Object FullName -Descending | Select-Object -First 1
 if ($null -eq $bossac) {
     throw 'bossac.exe was not found in the installed Arduino tools.'
+}
+
+if ($Auto) {
+    $Port = Find-MowerEmuPort
 }
 
 $portsBefore = Get-ComPorts

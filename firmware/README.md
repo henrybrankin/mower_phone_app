@@ -2,7 +2,7 @@
 
 This folder contains the Arduino Nano 33 BLE Sense Rev2 mower firmware and the
 OTA prototype configuration. The sketch advertises as `MowerEMU`, sends IMU
-telemetry, accepts zero calibration, and reports firmware version `0.1.0`.
+telemetry, accepts zero calibration, and reports firmware version `0.1.1`.
 
 See [OTA-DESIGN.md](OTA-DESIGN.md) for the verified MCUboot layout, image
 formats, hardware-test results, and planned BLE update workflow.
@@ -52,14 +52,28 @@ Arduino core's 1200-baud touch mechanism:
 powershell -ExecutionPolicy Bypass -File firmware\upload_recovery.ps1 -Port COM11
 ```
 
+After firmware 0.1.1 or later is running, the port can be discovered
+automatically:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File firmware\upload_recovery.ps1 -Auto
+```
+
+At 115200 baud the host sends `MOWER_EMU?`; the firmware responds with protocol
+version, firmware version, and the nRF52840 unique device ID. The parser is
+non-blocking and never waits for a serial terminal. Automatic discovery probes
+only USB devices with the Nano 33 BLE application VID/PID. If more than one EMU
+answers, the script refuses to choose and requires an explicit `-Port`.
+
 The script verifies the artifact against its manifest, observes the application
 port transition, confirms that the new port identifies as an nRF52840 SAM-BA
 bootloader, uploads only `mower-sam-ba.bin`, and waits for the original
 application port to return. Do not substitute the ordinary Arduino sketch
 upload command, because it would overwrite MCUboot at `0x10000`.
 
-This automatic COM11 -> COM9 -> COM11 recovery cycle was hardware-verified on
-Windows on 2026-08-21 with the 432728-byte combined image.
+Automatic discovery and the complete COM11 -> COM9 -> COM11 recovery cycle were
+hardware-verified on Windows on 2026-08-21 with firmware 0.1.1 and the
+433024-byte combined image.
 
 The OTA installation and BLE transfer remain prototype work. Use the checked
 artifact build below instead of manually composing recovery images.
