@@ -45,6 +45,22 @@ combined recovery image containing both MCUboot and the mower application. The
 BLE update image contains only the MCUboot-format mower application and is
 written to the secondary slot by the running firmware.
 
+On Windows, the recovery uploader can enter SAM-BA automatically through the
+Arduino core's 1200-baud touch mechanism:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File firmware\upload_recovery.ps1 -Port COM11
+```
+
+The script verifies the artifact against its manifest, observes the application
+port transition, confirms that the new port identifies as an nRF52840 SAM-BA
+bootloader, uploads only `mower-sam-ba.bin`, and waits for the original
+application port to return. Do not substitute the ordinary Arduino sketch
+upload command, because it would overwrite MCUboot at `0x10000`.
+
+This automatic COM11 -> COM9 -> COM11 recovery cycle was hardware-verified on
+Windows on 2026-08-21 with the 432728-byte combined image.
+
 The OTA installation and BLE transfer remain prototype work. Use the checked
 artifact build below instead of manually composing recovery images.
 
