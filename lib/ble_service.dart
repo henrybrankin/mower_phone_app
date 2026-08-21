@@ -331,7 +331,7 @@ class MowerBleService {
       payloadBytesPerChunk = 16;
     }
     final acknowledgementWindowBytes = conservativeIosFlashTransport
-        ? 1024
+        ? 4096
         : (Platform.isIOS ? 3840 : 256);
     final start = <int>[
       startCommand,

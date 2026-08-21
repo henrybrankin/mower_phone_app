@@ -278,9 +278,10 @@ telemetry immediately and may restart staging from offset zero.
 
 For reliability testing, iPhone full-image staging deliberately uses 16-byte
 data fragments, an acknowledged write every 64 bytes, and an Arduino offset
-check every 1024 bytes. The 16-byte/64-byte cadence completed a 367192-byte
-transfer in 467 seconds (786 B/s) with 256-byte checks; increasing only the
-check interval is the next controlled optimisation.
+check every 4096 bytes. The 16-byte/64-byte cadence completed a 367192-byte
+transfer in 467 seconds (786 B/s) with 256-byte checks and 395 seconds (929 B/s)
+with 1024-byte checks. Increasing only the check interval remains the next
+controlled optimisation.
 
 ## Current LED diagnostics
 
