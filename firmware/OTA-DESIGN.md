@@ -276,15 +276,15 @@ session, re-erases the partial secondary image while disconnected, and only
 then resumes advertising. A later connection therefore receives normal
 telemetry immediately and may restart staging from offset zero.
 
-For reliability testing, iPhone full-image staging now uses 128-byte
-data fragments, an acknowledged write every 256 bytes, and an Arduino offset
+The selected reliable iPhone full-image transport uses 64-byte data fragments,
+an acknowledged write every 128 bytes, and an Arduino offset
 check every 4096 bytes. The 16-byte/64-byte cadence completed a 367192-byte
 transfer in 467 seconds (786 B/s) with 256-byte checks and 395 seconds (929 B/s)
 with 1024-byte checks. With 4096-byte checks it completed in 381 seconds
 (963 B/s). The 32-byte/64-byte configuration then completed in 371 seconds
-(989 B/s), and 64-byte/128-byte completed in 200 seconds (1829 B/s). Testing
-128-byte/256-byte is the next controlled step; 64-byte/128-byte remains the
-known-good fallback.
+(989 B/s), and 64-byte/128-byte completed in 200 seconds (1829 B/s). The next
+128-byte/256-byte test disconnected, establishing 64-byte fragments as the
+current reliable limit.
 
 ## Current LED diagnostics
 
