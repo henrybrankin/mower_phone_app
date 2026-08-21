@@ -258,11 +258,18 @@ operations are in progress.
 
 A later reliability pass retained direct, aligned per-fragment flash writes,
 added recoverable offset acknowledgements, repeated active-transfer status,
-bounded Flutter write retries, and reduced telemetry from 50 Hz to 1 Hz during
-OTA. Buffering larger flash writes was rejected after hardware tests showed it
-could starve ArduinoBLE and make the board temporarily unreachable. The final
+and bounded Flutter write retries. Normal telemetry is now stopped completely
+while the secondary slot is being prepared or written, and Flutter suspends its
+telemetry-freshness watchdog for the transfer. BLE connection-state events and
+the OTA status/timeouts remain active. Buffering larger flash writes was
+rejected after hardware tests showed it could starve ArduinoBLE and make the
+board temporarily unreachable. The final
 367000-byte image completed staging and verification on Windows at approximately
 500--600 B/s; the exact result was not retained.
+
+The telemetry-silent transfer was hardware-verified on Windows on 2026-08-21:
+all 366936 bytes staged and verified in 638 seconds (574 B/s), and normal
+telemetry resumed after completion.
 
 ## Current LED diagnostics
 

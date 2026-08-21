@@ -109,8 +109,12 @@ hardware-verified on Windows with the 366680-byte firmware 0.1.0 image in 641
 seconds (572 B/s).
 
 The current reliable transport also retries uncertain Windows writes, resumes
-from stable Arduino-reported offsets, repeats transfer credits, and throttles
-normal telemetry to 1 Hz during OTA to avoid BLE contention. Direct per-fragment
-flash programming is intentional: larger buffered FlashIAP operations caused
-ArduinoBLE disconnections in hardware tests. Normal 50 Hz telemetry resumes
-when the transfer ends.
+from stable Arduino-reported offsets, and repeats transfer credits. Normal
+telemetry is stopped while OTA prepares or writes the secondary slot to avoid
+BLE contention. During that interval Flutter suspends its telemetry-freshness
+watchdog but continues to monitor BLE connection events and OTA status/timeouts.
+Direct per-fragment flash programming is intentional: larger buffered FlashIAP
+operations caused ArduinoBLE disconnections in hardware tests. Normal 50 Hz
+telemetry and its freshness watchdog resume when the transfer ends.
+This telemetry-silent path was hardware-verified on Windows with the 366936-byte
+image in 638 seconds (574 B/s); telemetry resumed normally afterward.

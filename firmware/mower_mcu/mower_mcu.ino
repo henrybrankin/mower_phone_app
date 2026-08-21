@@ -66,10 +66,10 @@ uint32_t g_otaRunningCrc = 0xFFFFFFFFu;
 uint32_t g_otaLastPublishedBytes = 0;
 bool g_otaWritesFlash = false;
 bool g_otaStagesFullImage = false;
+bool g_otaTelemetryPaused = false;
 bool g_flashInitialized = false;
 uint32_t g_otaNextSectorEraseAddress = kSecondarySlotAddress;
 unsigned long g_otaLastStatusMillis = 0;
-unsigned long g_otaLastTelemetryMillis = 0;
 unsigned long g_otaNextEraseMillis = 0;
 mbed::FlashIAP g_flash;
 
@@ -170,6 +170,7 @@ static void publishOtaStatus() {
 static void setOtaError(uint8_t result) {
   g_otaState = kOtaError;
   g_otaResult = result;
+  g_otaTelemetryPaused = false;
   publishOtaStatus();
 }
 
@@ -355,6 +356,7 @@ static void handleOtaControl(BLEDevice, BLECharacteristic) {
         setOtaError(kOtaResultInvalidLength);
         return;
       }
+      g_otaTelemetryPaused = true;
       g_otaState = g_otaStagesFullImage ? kOtaPreparing : kOtaReceiving;
       g_otaResult = kOtaResultOk;
       publishOtaStatus();
@@ -374,6 +376,7 @@ static void handleOtaControl(BLEDevice, BLECharacteristic) {
       } else {
         g_otaState = kOtaComplete;
         g_otaResult = kOtaResultOk;
+        g_otaTelemetryPaused = false;
         publishOtaStatus();
       }
       break;
@@ -388,6 +391,7 @@ static void handleOtaControl(BLEDevice, BLECharacteristic) {
       g_otaLastPublishedBytes = 0;
       g_otaWritesFlash = false;
       g_otaStagesFullImage = false;
+      g_otaTelemetryPaused = false;
       publishOtaStatus();
       break;
 
@@ -592,15 +596,9 @@ void loop() {
     int8_t temp = gotGyro ? static_cast<int8_t>(constrain(roundf(gz), -128.0f, 127.0f)) : 0;
     uint8_t packet[4] = {static_cast<uint8_t>(roll), static_cast<uint8_t>(pitch), pressure, static_cast<uint8_t>(temp)};
 
-    const bool otaActive =
-        g_otaState == kOtaReceiving || g_otaState == kOtaPreparing;
-    const bool otaTelemetryDue =
-        !otaActive ||
-        now - g_otaLastTelemetryMillis >= 1000;
-    if (g_isConnected && otaTelemetryDue) {
+    if (g_isConnected && !g_otaTelemetryPaused) {
       telemetryChar.setValue(packet, sizeof(packet));
       telemetryChar.broadcast();
-      g_otaLastTelemetryMillis = now;
     }
 
     if (g_zeroCommandReceived) {

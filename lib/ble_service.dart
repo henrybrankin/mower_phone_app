@@ -58,6 +58,7 @@ class MowerBleService {
   BluetoothCharacteristic? _otaStatusChar;
   StreamSubscription<List<ScanResult>>? _scanSub;
   StreamSubscription<BluetoothConnectionState>? _connSub;
+  bool _otaTransferInProgress = false;
   final _connectionStateController =
       StreamController<BluetoothConnectionState>.broadcast();
 
@@ -68,6 +69,8 @@ class MowerBleService {
 
   bool get otaTransportAvailable =>
       _otaControlChar != null && _otaDataChar != null && _otaStatusChar != null;
+
+  bool get otaTransferInProgress => _otaTransferInProgress;
 
   String get platformName {
     if (Platform.isIOS) return 'iPhone';
@@ -326,6 +329,7 @@ class MowerBleService {
       ..._uint32Le(crc),
     ];
 
+    _otaTransferInProgress = true;
     try {
       final stopwatch = Stopwatch()..start();
       var statusFuture = _waitForOtaStatus(
@@ -430,6 +434,8 @@ class MowerBleService {
         // Preserve the original transfer error if the best-effort abort fails.
       }
       rethrow;
+    } finally {
+      _otaTransferInProgress = false;
     }
   }
 

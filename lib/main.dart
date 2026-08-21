@@ -161,6 +161,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final lastTelemetryAt = _lastTelemetryAt;
     if (!_connected || lastTelemetryAt == null) return;
 
+    if (_bleService.otaTransferInProgress) {
+      // OTA status and BLE connection events provide liveness while ordinary
+      // telemetry is intentionally silent. Keep a fresh grace period for when
+      // telemetry resumes after the transfer finishes or aborts.
+      _lastTelemetryAt = DateTime.now();
+      return;
+    }
+
     if (DateTime.now().difference(lastTelemetryAt) > _telemetryTimeout) {
       unawaited(_handleConnectionLoss('No telemetry received'));
     }
