@@ -11,14 +11,17 @@ Sense Rev2:
 3. MCUboot validates an image in the primary slot and starts it at `0x20000`.
 4. A relocated Zephyr LED test ran successfully.
 5. The relocated Arduino mower firmware starts normally, advertises over BLE,
-   reports firmware version `0.1.1`, and communicates with the Flutter app.
+   reports its firmware version and communicates with the Flutter app.
 6. The normal Arduino USB serial interface returns as COM3 after startup.
 7. `firmware/build_ota.ps1` has been exercised from a clean build and produces
    a verified BLE image, a structurally checked SAM-BA image, and a SHA-256
    manifest.
 
-The BLE image-transfer service, swap request, confirmation, and rollback tests
-have not yet been implemented.
+8. The BLE service stages and verifies a complete image, marks it pending, and
+   reboots into an MCUboot trial image.
+9. Flutter can explicitly confirm a healthy trial image.
+10. A hardware-tested 0.1.2 to 0.1.3 update remained on 0.1.3 after confirmation
+    and a subsequent reset. Deliberate rollback testing remains outstanding.
 
 ## Objective
 
@@ -147,8 +150,8 @@ the verification model.
    digital signature before marking it pending.
 6. The mower restarts. MCUboot performs a power-failure-safe swap using the
    scratch area.
-7. The new image boots in trial mode, performs health checks, and confirms
-   itself.
+7. The new image boots in trial mode and performs its normal startup checks.
+   The operator verifies its version and telemetry, then confirms it in Flutter.
 8. If it does not confirm, MCUboot restores the previous image on a subsequent
    restart.
 9. Flutter reconnects and verifies the newly reported firmware version.
@@ -170,8 +173,10 @@ Three characteristics extend the existing mower service:
 All multibyte integers are unsigned little-endian. Control command `0x01`
 starts a transfer and contains the total length and expected IEEE CRC-32.
 Command `0x02` finishes and validates it; command `0x03` aborts and resets the
-receiver. The status payload is ten bytes: one state byte, one result byte,
-four received-length bytes, and four expected-length bytes.
+receiver. Command `0x06` marks a verified full image pending and schedules a
+reset. Command `0x07` confirms the running image, and is accepted only during
+an MCUboot trial. The status payload is ten bytes: one state byte, one result
+byte, four received-length bytes, and four expected-length bytes.
 
 The receiver accepts only the next exact byte offset, rejects chunks that
 would exceed the announced length, and currently limits test transfers to
@@ -234,17 +239,18 @@ secondary slot.
 
 Control command `0x05` stages the bundled `mower-update.bin` across the full
 secondary slot. The firmware validates the fixed slot boundary and flash
-program alignment. The complete secondary slot is erased during firmware
-startup, before BLE begins advertising, so connected-time staging performs
-program operations only. The phone supplies only ordered image bytes; it cannot
-select a flash address.
+program alignment. The slot is erased during an ordinary confirmed startup,
+before BLE begins advertising, so connected-time staging performs program
+operations only. A trial image detects MCUboot's `copy_done` flag with an unset
+`image_ok` flag and preserves the secondary rollback copy. The phone supplies
+only ordered image bytes; it cannot select a flash address.
 
 At finish, the firmware compares the streaming CRC-32, reads the complete image
 back from flash and independently checks its CRC-32, then validates the MCUboot
 header magic, 0x200-byte header size, declared image size, and TLV header. Only
-then does it report success. This milestone intentionally does not write the
-MCUboot trailer, mark the image pending, reboot, or swap slots, so a successful
-test leaves the currently running firmware unchanged.
+then does it report success. Staging alone leaves the running firmware
+unchanged. Activation is a separate confirmed action that writes MCUboot's
+pending magic and resets after returning the BLE control response.
 
 `build_ota.ps1` copies the checked update image and its manifest into
 `assets/firmware/`, making the firmware release part of the Flutter app. About
@@ -286,6 +292,26 @@ with 1024-byte checks. With 4096-byte checks it completed in 381 seconds
 128-byte/256-byte test disconnected, establishing 64-byte fragments as the
 current reliable limit.
 
+### Trial activation and confirmation
+
+After staging succeeds, Flutter enables **Activate staged firmware**. Control
+command `0x06` is rejected unless the current session completed a verified
+full-image transfer. The firmware writes only MCUboot's pending magic in the
+secondary trailer and resets after a short delay. MCUboot swaps the slots using
+its scratch area and boots the new primary as a trial.
+
+The trial firmware recognizes the primary trailer state at startup and does
+not erase the secondary slot, which contains the previous application needed
+for rollback. After Flutter reconnects, the operator checks the version and
+telemetry and selects **Confirm running firmware**. Command `0x07` writes the
+primary `image_ok` flag. A later confirmed boot may safely erase the secondary
+slot in preparation for another update.
+
+This was hardware-verified on 2026-10-03 with device ID
+`F1F17557F66E82BF`: version 0.1.2 was installed using `mower-sam-ba.bin`, the
+368032-byte version 0.1.3 image was staged over BLE, activated as a trial,
+confirmed, and retained after a manual reset.
+
 ## Current LED diagnostics
 
 The Arduino mower sketch uses the yellow `LED_BUILTIN` during startup:
@@ -309,7 +335,8 @@ the red LED rather than Arduino's yellow built-in LED.
   telemetry, and persistent diagnostic logging.
 - Never erase or program the primary slot from the running application.
 - Reject images that exceed the slot or target a different board/layout.
-- Require a valid digital signature before allowing an update or boot.
+- Production releases should require a valid digital signature before allowing
+  an update or boot. The current prototype uses MCUboot's unsigned-image mode.
 - Reject updates while the engine or control outputs are active.
 - Make every swap step resumable after arbitrary power loss.
 - Preserve and test the SAM-BA USB recovery path after boot-manager changes.
@@ -318,7 +345,8 @@ the red LED rather than Arduino's yellow built-in LED.
 
 ## Next milestones
 
-1. Add production signing keys and enable signature enforcement in MCUboot.
-2. Mark a verified staged image pending, reboot, and confirm the trial image.
-3. Test interrupted transfers, interrupted swaps, trial confirmation, rollback,
+1. Test deliberate non-confirmation rollback and interrupted swaps.
+2. Add production signing keys and enable signature enforcement in MCUboot if
+   the project adopts signed updates.
+3. Test interrupted transfers, trial confirmation, rollback,
    incompatible images, corrupt images, and low-voltage rejection.

@@ -2,7 +2,8 @@
 
 This folder contains the Arduino Nano 33 BLE Sense Rev2 mower firmware and the
 OTA prototype configuration. The sketch advertises as `MowerEMU`, sends IMU
-telemetry, accepts zero calibration, and reports firmware version `0.1.1`.
+telemetry, accepts zero calibration, and currently reports firmware version
+`0.1.3`.
 
 See [OTA-DESIGN.md](OTA-DESIGN.md) for the verified MCUboot layout, image
 formats, hardware-test results, and planned BLE update workflow.
@@ -75,8 +76,9 @@ Automatic discovery and the complete COM11 -> COM9 -> COM11 recovery cycle were
 hardware-verified on Windows on 2026-08-21 with firmware 0.1.1 and the
 433024-byte combined image.
 
-The OTA installation and BLE transfer remain prototype work. Use the checked
-artifact build below instead of manually composing recovery images.
+The OTA installation, BLE transfer, MCUboot trial activation, and confirmation
+path are now hardware-proven. Use the checked artifact build below instead of
+manually composing recovery images.
 
 ## OTA artifact build
 
@@ -131,14 +133,18 @@ roughly 256-byte windows. Diagnostics show the measured duration, throughput,
 MTU, and chosen payload size.
 
 The separately confirmed **Stage bundled firmware** action writes the complete
-embedded MCUboot image to the secondary slot. Firmware startup erases that slot
-before BLE advertising begins, avoiding blocking erase operations while a phone
-is connected.
+embedded MCUboot image to the secondary slot. On an ordinary confirmed boot,
+firmware startup erases that slot before BLE advertising begins. On an MCUboot
+trial boot, the firmware preserves it because it contains the rollback image.
 The Arduino verifies both streaming and flash-readback CRC-32 and checks the
-MCUboot header and TLV. It deliberately does not mark the image pending, reboot,
-or activate it; activation is a later milestone. The full path was
-hardware-verified on Windows with the 366680-byte firmware 0.1.0 image in 641
-seconds (572 B/s).
+MCUboot header and TLV. **Activate staged firmware** marks the image pending and
+reboots into an MCUboot trial. After reconnecting and checking the version and
+telemetry, **Confirm running firmware** makes that image permanent.
+
+The complete process was hardware-verified on Windows on 2026-10-03 by loading
+firmware 0.1.2 through SAM-BA, transferring the 368032-byte 0.1.3 image over
+BLE, activating it as a trial, confirming it from Flutter, resetting the board,
+and verifying that it still reported 0.1.3.
 
 The current reliable transport also retries uncertain Windows writes, resumes
 from stable Arduino-reported offsets, and repeats transfer credits. Normal

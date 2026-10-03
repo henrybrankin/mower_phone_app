@@ -14,7 +14,7 @@
 #define OTA_DATA_CHAR_UUID        "12345678-1234-5678-1234-56789abcdef5"
 #define OTA_STATUS_CHAR_UUID      "12345678-1234-5678-1234-56789abcdef6"
 
-const char kFirmwareVersion[] = "0.1.1";
+const char kFirmwareVersion[] = "0.1.3";
 
 bool g_isConnected = false;
 bool g_zeroCommandReceived = false;
@@ -31,9 +31,17 @@ const unsigned long kUpdateIntervalMs = 20;
 const float kComplementaryAlpha = 0.95f;
 const float kHeadingAlpha = 0.2f;
 const uint32_t kMaxOtaTransportTestBytes = 4096;
+const uint32_t kPrimarySlotAddress = 0x00020000u;
+const uint32_t kPrimarySlotSize = 0x0006E000u;
 const uint32_t kSecondarySlotAddress = 0x0008E000u;
 const uint32_t kSecondarySlotSize = 0x0006E000u;
 const uint32_t kOtaFlashTestBytes = 1024;
+const uint32_t kMcubootTrailerMagicOffset = 16;
+const uint32_t kMcubootImageOkOffset = 24;
+const uint32_t kMcubootCopyDoneOffset = 32;
+const uint8_t kMcubootMagic[16] = {
+    0x77, 0xC2, 0x95, 0xF3, 0x60, 0xD2, 0xEF, 0x7F,
+    0x35, 0x52, 0x50, 0x0F, 0x2C, 0xB6, 0x79, 0x80};
 
 enum OtaState : uint8_t {
   kOtaIdle = 0,
@@ -41,6 +49,8 @@ enum OtaState : uint8_t {
   kOtaComplete = 2,
   kOtaError = 3,
   kOtaPreparing = 4,
+  kOtaActivationPending = 5,
+  kOtaTrialBoot = 6,
 };
 
 enum OtaResult : uint8_t {
@@ -58,6 +68,9 @@ enum OtaResult : uint8_t {
   kOtaResultFlashReadbackFailed = 11,
   kOtaResultInvalidImage = 12,
   kOtaResultSlotNotPrepared = 13,
+  kOtaResultNoVerifiedImage = 14,
+  kOtaResultTrailerWriteFailed = 15,
+  kOtaResultNotTrialImage = 16,
 };
 
 uint8_t g_otaState = kOtaIdle;
@@ -72,9 +85,68 @@ bool g_otaStagesFullImage = false;
 bool g_otaTelemetryPaused = false;
 bool g_flashInitialized = false;
 bool g_secondarySlotBlank = false;
+bool g_trialBoot = false;
+bool g_rebootRequested = false;
+unsigned long g_rebootRequestedMillis = 0;
 uint32_t g_otaNextSectorEraseAddress = kSecondarySlotAddress;
 unsigned long g_otaLastStatusMillis = 0;
 mbed::FlashIAP g_flash;
+
+static bool initializeFlash() {
+  if (!g_flashInitialized) {
+    if (g_flash.init() != 0) {
+      return false;
+    }
+    g_flashInitialized = true;
+  }
+  return true;
+}
+
+static bool readPrimaryTrialState(bool* isTrial) {
+  if (!initializeFlash()) return false;
+  uint8_t copyDone = 0xFF;
+  uint8_t imageOk = 0xFF;
+  if (g_flash.read(&copyDone,
+                   kPrimarySlotAddress + kPrimarySlotSize -
+                       kMcubootCopyDoneOffset,
+                   1) != 0 ||
+      g_flash.read(&imageOk,
+                   kPrimarySlotAddress + kPrimarySlotSize -
+                       kMcubootImageOkOffset,
+                   1) != 0) {
+    return false;
+  }
+  *isTrial = copyDone == 0x01 && imageOk != 0x01;
+  return true;
+}
+
+static bool writeMcubootTrailer(uint32_t address, const uint8_t* bytes,
+                                size_t length) {
+  if (!initializeFlash()) return false;
+  const uint32_t programSize = g_flash.get_page_size();
+  if (programSize == 0 || length > 16 || address % programSize != 0 ||
+      length % programSize != 0) {
+    return false;
+  }
+  alignas(4) uint8_t buffer[16];
+  memset(buffer, 0xFF, sizeof(buffer));
+  memcpy(buffer, bytes, length);
+  return g_flash.program(buffer, address, length) == 0;
+}
+
+static bool markSecondaryImagePending() {
+  return writeMcubootTrailer(
+      kSecondarySlotAddress + kSecondarySlotSize - kMcubootTrailerMagicOffset,
+      kMcubootMagic, sizeof(kMcubootMagic));
+}
+
+static bool confirmPrimaryImage() {
+  alignas(4) uint8_t flag[8] = {0x01, 0xFF, 0xFF, 0xFF,
+                                0xFF, 0xFF, 0xFF, 0xFF};
+  return writeMcubootTrailer(
+      kPrimarySlotAddress + kPrimarySlotSize - kMcubootImageOkOffset,
+      flag, sizeof(flag));
+}
 
 static void haltWithBlinkCode(uint8_t blinkCount) {
   for (;;) {
@@ -216,12 +288,7 @@ static void setOtaError(uint8_t result) {
 }
 
 static bool eraseSecondarySlot() {
-  if (!g_flashInitialized) {
-    if (g_flash.init() != 0) {
-      return false;
-    }
-    g_flashInitialized = true;
-  }
+  if (!initializeFlash()) return false;
 
   const uint32_t flashStart = g_flash.get_flash_start();
   const uint32_t flashSize = g_flash.get_flash_size();
@@ -439,6 +506,33 @@ static void handleOtaControl(BLEDevice, BLECharacteristic) {
       publishOtaStatus();
       break;
 
+    case 0x06:
+      if (length != 1 || g_otaState != kOtaComplete ||
+          !g_otaStagesFullImage) {
+        setOtaError(kOtaResultNoVerifiedImage);
+      } else if (!markSecondaryImagePending()) {
+        setOtaError(kOtaResultTrailerWriteFailed);
+      } else {
+        g_otaState = kOtaActivationPending;
+        g_otaResult = kOtaResultOk;
+        publishOtaStatus();
+        g_rebootRequested = true;
+        g_rebootRequestedMillis = millis();
+      }
+      break;
+
+    case 0x07:
+      if (length != 1 || !g_trialBoot) {
+        setOtaError(kOtaResultNotTrialImage);
+      } else if (!confirmPrimaryImage()) {
+        setOtaError(kOtaResultTrailerWriteFailed);
+      } else {
+        g_trialBoot = false;
+        resetOtaTransfer();
+        publishOtaStatus();
+      }
+      break;
+
     default:
       setOtaError(kOtaResultInvalidCommand);
       break;
@@ -504,12 +598,21 @@ void setup() {
   digitalWrite(LED_BUILTIN, LOW);
   Serial.begin(115200);
 
-  Serial.println("Erasing OTA secondary slot");
-  if (!eraseSecondarySlot()) {
-    Serial.println("OTA secondary slot erase failed");
+  if (!readPrimaryTrialState(&g_trialBoot)) {
+    Serial.println("MCUboot trailer read failed");
     haltWithBlinkCode(4);
   }
-  Serial.println("OTA secondary slot ready");
+  if (g_trialBoot) {
+    Serial.println("MCUboot trial image: preserving rollback slot");
+    g_otaState = kOtaTrialBoot;
+  } else {
+    Serial.println("Erasing OTA secondary slot");
+    if (!eraseSecondarySlot()) {
+      Serial.println("OTA secondary slot erase failed");
+      haltWithBlinkCode(4);
+    }
+    Serial.println("OTA secondary slot ready");
+  }
 
   Serial.println("Initializing Wire and IMU");
   // Re-establish the Nano 33 BLE Sense internal sensor power and I2C pull-up
@@ -568,6 +671,10 @@ void setup() {
 void loop() {
   serviceSerialCommands();
   BLEDevice central = BLE.central();
+
+  if (g_rebootRequested && millis() - g_rebootRequestedMillis >= 750) {
+    NVIC_SystemReset();
+  }
 
   if (central) {
     if (!g_isConnected) {

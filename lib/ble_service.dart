@@ -306,6 +306,22 @@ class MowerBleService {
     onProgress: onProgress,
   );
 
+  Future<void> activateStagedImage() async {
+    final control = _otaControlChar;
+    if (control == null) {
+      throw StateError('Firmware transport control not found');
+    }
+    await control.write([0x06], withoutResponse: false);
+  }
+
+  Future<void> confirmRunningImage() async {
+    final control = _otaControlChar;
+    if (control == null) {
+      throw StateError('Firmware transport control not found');
+    }
+    await control.write([0x07], withoutResponse: false);
+  }
+
   Future<OtaTransportTestResult> _runOtaTransfer({
     required int startCommand,
     required List<int> payload,

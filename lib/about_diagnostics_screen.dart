@@ -28,6 +28,7 @@ class _AboutDiagnosticsScreenState extends State<AboutDiagnosticsScreen> {
   bool _otaTestRunning = false;
   double _otaTestProgress = 0;
   String? _otaTestResult;
+  bool _firmwareStaged = false;
 
   String get _platformName {
     if (Platform.isIOS) return 'iPhone (iOS)';
@@ -185,11 +186,64 @@ class _AboutDiagnosticsScreenState extends State<AboutDiagnosticsScreen> {
             '${result.elapsed.inSeconds} s '
             '(${result.bytesPerSecond.toStringAsFixed(0)} B/s). '
             'The image has not been activated.';
+        _firmwareStaged = true;
       });
     } catch (error) {
       if (mounted) setState(() => _otaTestResult = 'Failed: $error');
     } finally {
       if (mounted) setState(() => _otaTestRunning = false);
+    }
+  }
+
+  Future<void> _activateStagedFirmware() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Activate staged firmware?'),
+        content: const Text(
+          'The EMU will reboot into the staged image as an unconfirmed trial. '
+          'Reconnect, check that it is healthy, then confirm it. If it resets '
+          'again before confirmation, MCUboot will restore the previous image.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Activate and reboot'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await widget.bleService!.activateStagedImage();
+      if (mounted) {
+        setState(() {
+          _firmwareStaged = false;
+          _otaTestResult =
+              'Activation requested. Wait for the EMU to reboot, then reconnect '
+              'and verify its firmware version before confirming it.';
+        });
+      }
+    } catch (error) {
+      if (mounted) setState(() => _otaTestResult = 'Activation failed: $error');
+    }
+  }
+
+  Future<void> _confirmRunningFirmware() async {
+    try {
+      await widget.bleService!.confirmRunningImage();
+      if (mounted) {
+        setState(() {
+          _otaTestResult =
+              'Running firmware confirmed. MCUboot will keep this image.';
+        });
+      }
+    } catch (error) {
+      if (mounted) setState(() => _otaTestResult = 'Confirmation failed: $error');
     }
   }
 
@@ -280,6 +334,32 @@ class _AboutDiagnosticsScreenState extends State<AboutDiagnosticsScreen> {
                   label: Text(
                     _otaTestRunning ? 'Testing...' : 'Run BLE transport test',
                   ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: FilledButton.icon(
+                  onPressed: widget.mowerConnected &&
+                          _firmwareStaged &&
+                          !_otaTestRunning
+                      ? _activateStagedFirmware
+                      : null,
+                  icon: const Icon(Icons.restart_alt),
+                  label: const Text('Activate staged firmware'),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: OutlinedButton.icon(
+                  onPressed: widget.mowerConnected &&
+                          widget.bleService?.otaTransportAvailable == true &&
+                          !_otaTestRunning
+                      ? _confirmRunningFirmware
+                      : null,
+                  icon: const Icon(Icons.verified_outlined),
+                  label: const Text('Confirm running firmware'),
                 ),
               ),
               const SizedBox(height: 8),
