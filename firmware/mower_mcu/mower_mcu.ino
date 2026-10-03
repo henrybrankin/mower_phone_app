@@ -14,7 +14,7 @@
 #define OTA_DATA_CHAR_UUID        "12345678-1234-5678-1234-56789abcdef5"
 #define OTA_STATUS_CHAR_UUID      "12345678-1234-5678-1234-56789abcdef6"
 
-const char kFirmwareVersion[] = "0.1.3";
+const char kFirmwareVersion[] = "0.1.4";
 
 bool g_isConnected = false;
 bool g_zeroCommandReceived = false;
@@ -23,13 +23,10 @@ float g_filteredRoll = 0.0f;
 float g_filteredPitch = 0.0f;
 float g_rollZeroOffset = 0.0f;
 float g_pitchZeroOffset = 0.0f;
-float g_headingDeg = 0.0f;
-bool g_headingValid = false;
 char g_serialCommand[32];
 size_t g_serialCommandLength = 0;
 const unsigned long kUpdateIntervalMs = 20;
 const float kComplementaryAlpha = 0.95f;
-const float kHeadingAlpha = 0.2f;
 const uint32_t kMaxOtaTransportTestBytes = 4096;
 const uint32_t kPrimarySlotAddress = 0x00020000u;
 const uint32_t kPrimarySlotSize = 0x0006E000u;
@@ -158,44 +155,6 @@ static void haltWithBlinkCode(uint8_t blinkCount) {
     }
     delay(900);
   }
-}
-
-static uint8_t headingToByte(float headingDeg) {
-  float wrapped = fmodf(headingDeg, 360.0f);
-  if (wrapped < 0.0f) {
-    wrapped += 360.0f;
-  }
-  return static_cast<uint8_t>(constrain(roundf(wrapped * (255.0f / 360.0f)), 0.0f, 255.0f));
-}
-
-static float wrapHeading360(float headingDeg) {
-  float wrapped = fmodf(headingDeg, 360.0f);
-  if (wrapped < 0.0f) {
-    wrapped += 360.0f;
-  }
-  return wrapped;
-}
-
-static void updateHeadingFromMag(float mx, float my, float mz, float rollDeg, float pitchDeg) {
-  float rollRad = rollDeg * PI / 180.0f;
-  float pitchRad = pitchDeg * PI / 180.0f;
-  float xh = mx * cosf(pitchRad) + mz * sinf(pitchRad);
-  float yh = mx * sinf(rollRad) * sinf(pitchRad) + my * cosf(rollRad) - mz * sinf(rollRad) * cosf(pitchRad);
-  float headingDeg = wrapHeading360(atan2f(yh, xh) * 180.0f / PI);
-
-  if (!g_headingValid) {
-    g_headingDeg = headingDeg;
-    g_headingValid = true;
-    return;
-  }
-
-  float delta = headingDeg - g_headingDeg;
-  if (delta > 180.0f) {
-    delta -= 360.0f;
-  } else if (delta < -180.0f) {
-    delta += 360.0f;
-  }
-  g_headingDeg = wrapHeading360(g_headingDeg + (kHeadingAlpha * delta));
 }
 
 static void serviceSerialCommands() {
@@ -628,7 +587,10 @@ void setup() {
   delay(50);
   Wire.begin();
   IMU.debug(Serial);
-  if (!IMU.begin()) {
+  // The BMI270 supplies the accelerometer and gyroscope. Do not initialize the
+  // BMM150 magnetometer; heading is not useful for the EMU and its driver costs
+  // flash space.
+  if (!IMU.begin(BOSCH_ACCELEROMETER_ONLY)) {
     Serial.println("IMU init failed");
     haltWithBlinkCode(2);
   }
@@ -718,21 +680,14 @@ void loop() {
     float gx = 0.0f;
     float gy = 0.0f;
     float gz = 0.0f;
-    float mx = 0.0f;
-    float my = 0.0f;
-    float mz = 0.0f;
     bool gotAccel = IMU.accelerationAvailable() > 0;
     bool gotGyro = IMU.gyroscopeAvailable() > 0;
-    bool gotMag = IMU.magneticFieldAvailable() > 0;
 
     if (gotAccel) {
       IMU.readAcceleration(ax, ay, az);
     }
     if (gotGyro) {
       IMU.readGyroscope(gx, gy, gz);
-    }
-    if (gotMag) {
-      IMU.readMagneticField(mx, my, mz);
     }
 
     if (gotAccel) {
@@ -755,13 +710,10 @@ void loop() {
 
     int8_t roll = static_cast<int8_t>(constrain(roundf(g_filteredRoll - g_rollZeroOffset), -128.0f, 127.0f));
     int8_t pitch = static_cast<int8_t>(constrain(roundf(g_filteredPitch - g_pitchZeroOffset), -128.0f, 127.0f));
-    uint8_t pressure = g_headingValid ? headingToByte(g_headingDeg) : 0;
-    if (gotMag) {
-      updateHeadingFromMag(mx, my, mz, g_filteredRoll, g_filteredPitch);
-      pressure = headingToByte(g_headingDeg);
-    }
-    int8_t temp = gotGyro ? static_cast<int8_t>(constrain(roundf(gz), -128.0f, 127.0f)) : 0;
-    uint8_t packet[4] = {static_cast<uint8_t>(roll), static_cast<uint8_t>(pitch), pressure, static_cast<uint8_t>(temp)};
+    // Bytes 2 and 3 are reserved to keep the current telemetry packet stable
+    // until real pressure, RPM, and temperature telemetry is introduced.
+    uint8_t packet[4] = {static_cast<uint8_t>(roll),
+                         static_cast<uint8_t>(pitch), 0, 0};
 
     if (g_isConnected && !g_otaTelemetryPaused) {
       telemetryChar.setValue(packet, sizeof(packet));

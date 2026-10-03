@@ -135,16 +135,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     final roll = bytes[0].toSigned(8);
     final pitch = bytes[1].toSigned(8);
-    final pressure = bytes[2] * (360.0 / 255.0);
-    final temp = bytes[3].toSigned(8).toDouble();
-
     setState(() {
       _last = TelemetryData(
         ts: DateTime.now(),
         rollDeg: roll.toDouble(),
         pitchDeg: pitch.toDouble(),
-        oilPressure: pressure,
-        oilTemp: temp,
       );
     });
   }
@@ -240,6 +235,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           mowerConnected: _connected,
           mowerFirmwareVersion: _firmwareVersion,
           bleService: _bleService,
+          onShowMap: _openHeatmap,
         ),
       ),
     );
@@ -253,11 +249,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         centerTitle: true,
         actions: [
           IconButton(
-            onPressed: _openHeatmap,
-            icon: const Icon(Icons.map),
-            tooltip: 'Open failure heatmap',
-          ),
-          IconButton(
             onPressed: _openAboutDiagnostics,
             icon: const Icon(Icons.info_outline),
             tooltip: 'About and diagnostics',
@@ -267,15 +258,45 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 420),
-          child: Padding(
+          child: ListView(
             padding: const EdgeInsets.all(12),
-            child: Column(
-              children: [
+            children: [
                 StatusPanel(
                   connected: _connected,
                   firmwareVersion: _firmwareVersion,
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 10),
+                SafetySummary(
+                  connected: _connected,
+                  telemetryAvailable: _last != null,
+                ),
+                const SizedBox(height: 10),
+                SensorStatusPanel(
+                  connected: _connected,
+                  rollDeg: _last?.rollDeg,
+                  pitchDeg: _last?.pitchDeg,
+                ),
+                const SizedBox(height: 10),
+                const Row(
+                  children: [
+                    Expanded(
+                      child: CompactInstrument(
+                        icon: Icons.speed,
+                        label: 'ENGINE RPM',
+                        unit: 'rpm',
+                      ),
+                    ),
+                    SizedBox(width: 10),
+                    Expanded(
+                      child: CompactInstrument(
+                        icon: Icons.thermostat,
+                        label: 'ENGINE TEMP',
+                        unit: '°C',
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
                 Wrap(
                   alignment: WrapAlignment.center,
                   spacing: 8,
@@ -289,37 +310,29 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       label: Text(_connected ? 'Disconnect' : 'Connect'),
                     ),
                     ElevatedButton.icon(
-                      onPressed: _requestZero,
+                      onPressed: _connected ? _requestZero : null,
                       icon: const Icon(Icons.my_location),
                       label: const Text('Zero mower'),
                     ),
-                    ElevatedButton.icon(
-                      onPressed: _openHeatmap,
-                      icon: const Icon(Icons.map),
-                      label: const Text('Show map'),
-                    ),
                   ],
                 ),
-                const SizedBox(height: 12),
-                if (_last != null) LiveReadout(data: _last!),
-                if (_last != null) const SizedBox(height: 12),
+                const SizedBox(height: 10),
                 if (_last != null)
                   AttitudeIndicator(
                     rollDeg: _last!.rollDeg,
                     pitchDeg: _last!.pitchDeg,
-                    headingDeg: _last!.oilPressure,
                   ),
-                const SizedBox(height: 12),
-                Expanded(
-                  child: Center(
-                    child: Text(
-                      'Status: $_status',
-                      textAlign: TextAlign.center,
-                    ),
+                if (_last == null)
+                  const _WaitingForAttitude(),
+                const SizedBox(height: 10),
+                Center(
+                  child: Text(
+                    _status,
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ),
               ],
-            ),
           ),
         ),
       ),
@@ -373,51 +386,285 @@ class StatusPanel extends StatelessWidget {
   }
 }
 
-class LiveReadout extends StatelessWidget {
-  final TelemetryData data;
+class SafetySummary extends StatelessWidget {
+  final bool connected;
+  final bool telemetryAvailable;
 
-  const LiveReadout({super.key, required this.data});
+  const SafetySummary({
+    super.key,
+    required this.connected,
+    required this.telemetryAvailable,
+  });
 
   @override
   Widget build(BuildContext context) {
+    final label = !connected
+        ? 'EMU DISCONNECTED'
+        : telemetryAvailable
+        ? 'MONITORING — PRESSURE INPUT PENDING'
+        : 'WAITING FOR TELEMETRY';
+    final color = connected ? Colors.blueGrey.shade700 : Colors.grey.shade700;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            connected ? Icons.health_and_safety : Icons.sensors_off,
+            color: Colors.white,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              label,
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.4,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class SensorStatusPanel extends StatelessWidget {
+  final bool connected;
+  final double? rollDeg;
+  final double? pitchDeg;
+
+  const SensorStatusPanel({
+    super.key,
+    required this.connected,
+    this.rollDeg,
+    this.pitchDeg,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final hasAttitude = rollDeg != null && pitchDeg != null;
+    final combinedTilt = hasAttitude
+        ? math.acos(
+                (math.cos(rollDeg! * math.pi / 180) *
+                        math.cos(pitchDeg! * math.pi / 180))
+                    .clamp(-1.0, 1.0),
+              ) *
+              180 /
+              math.pi
+        : null;
+    final tiltLabel = combinedTilt == null
+        ? 'Unavailable'
+        : combinedTilt >= 45
+        ? 'DANGER'
+        : combinedTilt >= 35
+        ? 'WARNING'
+        : 'SAFE';
+    final tiltColor = combinedTilt == null
+        ? Colors.grey
+        : combinedTilt >= 45
+        ? Colors.red
+        : combinedTilt >= 35
+        ? Colors.orange
+        : Colors.green;
+
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Column(
           children: [
-            _infoColumn('Heading', _formatHeading(data.oilPressure)),
-            _infoColumn('Gyro Z', _formatSigned(data.oilTemp)),
-            _infoColumn('Roll', _formatSigned(data.rollDeg)),
-            _infoColumn('Pitch', _formatSigned(data.pitchDeg)),
+            _StatusLine(
+              icon: Icons.oil_barrel_outlined,
+              label: 'Oil pressure',
+              value: connected ? 'Awaiting A6 input' : 'Unavailable',
+              color: Colors.grey,
+            ),
+            const Divider(height: 12),
+            _StatusLine(
+              icon: Icons.landscape_outlined,
+              label: 'Tilt risk',
+              value: tiltLabel,
+              color: tiltColor,
+            ),
           ],
         ),
       ),
     );
   }
+}
 
-  Widget _infoColumn(String label, String value) => Column(
-    children: [
-      Text(label, style: const TextStyle(color: Colors.black54)),
-      const SizedBox(height: 6),
-      Text(
-        value,
-        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+class _StatusLine extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  final Color color;
+
+  const _StatusLine({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, color: color),
+        const SizedBox(width: 10),
+        Expanded(child: Text(label)),
+        Text(value, style: TextStyle(color: color, fontWeight: FontWeight.w800)),
+      ],
+    );
+  }
+}
+
+class CompactInstrument extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String unit;
+  final double? value;
+  final double minimum;
+  final double maximum;
+
+  const CompactInstrument({
+    super.key,
+    required this.icon,
+    required this.label,
+    required this.unit,
+    this.value,
+    this.minimum = 0,
+    this.maximum = 1,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(10, 10, 10, 8),
+        child: Column(
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, size: 17, color: Colors.black54),
+                const SizedBox(width: 5),
+                Text(
+                  label,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.black54,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 5),
+            SizedBox(
+              height: 62,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  Positioned.fill(
+                    child: CustomPaint(
+                      painter: _CompactGaugePainter(
+                        value: value,
+                        minimum: minimum,
+                        maximum: maximum,
+                      ),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 15),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          value == null ? '—' : value!.round().toString(),
+                          style: const TextStyle(
+                            fontSize: 22,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        Text(unit, style: const TextStyle(fontSize: 10)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
-    ],
-  );
+    );
+  }
+}
+
+class _CompactGaugePainter extends CustomPainter {
+  final double? value;
+  final double minimum;
+  final double maximum;
+
+  const _CompactGaugePainter({
+    required this.value,
+    required this.minimum,
+    required this.maximum,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Rect.fromLTWH(12, 7, size.width - 24, size.height * 1.15);
+    const start = math.pi;
+    const sweep = math.pi;
+    final track = Paint()
+      ..color = Colors.grey.shade300
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 7
+      ..strokeCap = StrokeCap.round;
+    canvas.drawArc(rect, start, sweep, false, track);
+    if (value == null || maximum <= minimum) return;
+    final fraction = ((value! - minimum) / (maximum - minimum)).clamp(0.0, 1.0);
+    final active = Paint()
+      ..color = Colors.green.shade600
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 7
+      ..strokeCap = StrokeCap.round;
+    canvas.drawArc(rect, start, sweep * fraction, false, active);
+  }
+
+  @override
+  bool shouldRepaint(covariant _CompactGaugePainter oldDelegate) =>
+      oldDelegate.value != value ||
+      oldDelegate.minimum != minimum ||
+      oldDelegate.maximum != maximum;
+}
+
+class _WaitingForAttitude extends StatelessWidget {
+  const _WaitingForAttitude();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Card(
+      child: SizedBox(
+        height: 120,
+        child: Center(child: Text('Connect to display mower attitude')),
+      ),
+    );
+  }
 }
 
 class AttitudeIndicator extends StatelessWidget {
   final double rollDeg;
   final double pitchDeg;
-  final double headingDeg;
 
   const AttitudeIndicator({
     super.key,
     required this.rollDeg,
     required this.pitchDeg,
-    required this.headingDeg,
   });
 
   @override
@@ -428,15 +675,24 @@ class AttitudeIndicator extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'Attitude',
-              style: TextStyle(fontWeight: FontWeight.w700),
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Attitude',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
+                Text('Roll ${_formatSigned(rollDeg)}°'),
+                const SizedBox(width: 12),
+                Text('Pitch ${_formatSigned(pitchDeg)}°'),
+              ],
             ),
             const SizedBox(height: 10),
             Center(
               child: SizedBox(
-                width: 210,
-                height: 210,
+                width: 190,
+                height: 190,
                 child: CustomPaint(
                   painter: _AttitudePainter(
                     rollDeg: rollDeg,
@@ -445,131 +701,10 @@ class AttitudeIndicator extends StatelessWidget {
                 ),
               ),
             ),
-            const SizedBox(height: 10),
-            SizedBox(
-              width: double.infinity,
-              height: 52,
-              child: HeadingTape(headingDeg: headingDeg),
-            ),
           ],
         ),
       ),
     );
-  }
-}
-
-class HeadingTape extends StatelessWidget {
-  final double headingDeg;
-
-  const HeadingTape({super.key, required this.headingDeg});
-
-  @override
-  Widget build(BuildContext context) {
-    return CustomPaint(painter: _HeadingTapePainter(headingDeg: headingDeg));
-  }
-}
-
-class _HeadingTapePainter extends CustomPainter {
-  final double headingDeg;
-
-  _HeadingTapePainter({required this.headingDeg});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final rect = RRect.fromRectAndRadius(
-      Offset.zero & size,
-      const Radius.circular(8),
-    );
-    final bgPaint = Paint()..color = const Color(0xFF10151D);
-    canvas.drawRRect(rect, bgPaint);
-
-    final centerX = size.width / 2;
-    final centerY = size.height / 2;
-    final pxPerDeg = size.width / 120.0;
-    final majorPaint = Paint()
-      ..color = Colors.white
-      ..strokeWidth = 2;
-    final minorPaint = Paint()
-      ..color = Colors.white70
-      ..strokeWidth = 1.2;
-
-    final wrapped = _wrapHeading(headingDeg);
-    final anchor = (wrapped / 5.0).floor() * 5.0;
-
-    for (int step = -24; step <= 24; step++) {
-      final tickHeading = anchor + (step * 5.0);
-      final delta = tickHeading - wrapped;
-      final x = centerX + delta * pxPerDeg;
-      if (x < 0 || x > size.width) continue;
-
-      final roundedTick = _wrapHeading(tickHeading).round() % 360;
-      final isMajor = roundedTick % 10 == 0;
-      final tickTop = isMajor ? 8.0 : 14.0;
-      final tickBottom = isMajor ? 24.0 : 22.0;
-      canvas.drawLine(
-        Offset(x, tickTop),
-        Offset(x, tickBottom),
-        isMajor ? majorPaint : minorPaint,
-      );
-
-      if (roundedTick % 30 == 0) {
-        final value = _wrapHeading(tickHeading);
-        final label = _headingLabel(value);
-        final tp = TextPainter(
-          text: TextSpan(
-            text: label,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 10,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          textDirection: TextDirection.ltr,
-        )..layout();
-        tp.paint(canvas, Offset(x - tp.width / 2, 28));
-      }
-    }
-
-    final pointerPath = Path()
-      ..moveTo(centerX, 4)
-      ..lineTo(centerX - 7, 14)
-      ..lineTo(centerX + 7, 14)
-      ..close();
-    canvas.drawPath(pointerPath, Paint()..color = Colors.amber.shade700);
-
-    final boxRect = RRect.fromRectAndRadius(
-      Rect.fromCenter(
-        center: Offset(centerX, centerY + 4),
-        width: 56,
-        height: 20,
-      ),
-      const Radius.circular(5),
-    );
-    canvas.drawRRect(boxRect, Paint()..color = const Color(0xFF1B2430));
-
-    final headingText = TextPainter(
-      text: TextSpan(
-        text: _formatHeading(headingDeg),
-        style: const TextStyle(
-          color: Colors.white,
-          fontSize: 11,
-          fontWeight: FontWeight.w800,
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    headingText.paint(
-      canvas,
-      Offset(
-        centerX - headingText.width / 2,
-        centerY - headingText.height / 2 + 4,
-      ),
-    );
-  }
-
-  @override
-  bool shouldRepaint(covariant _HeadingTapePainter oldDelegate) {
-    return oldDelegate.headingDeg != headingDeg;
   }
 }
 
@@ -764,26 +899,6 @@ String _formatSigned(double value) {
   return normalized >= 0 ? '+$text' : text;
 }
 
-double _wrapHeading(double value) {
-  double wrapped = value % 360.0;
-  if (wrapped < 0) wrapped += 360.0;
-  return wrapped;
-}
-
-String _formatHeading(double value) {
-  final wrapped = _wrapHeading(value).round() % 360;
-  return '${wrapped.toString().padLeft(3, '0')}°';
-}
-
-String _headingLabel(double heading) {
-  final rounded = _wrapHeading(heading).round() % 360;
-  if (rounded == 0) return 'N';
-  if (rounded == 90) return 'E';
-  if (rounded == 180) return 'S';
-  if (rounded == 270) return 'W';
-  return (rounded ~/ 10).toString().padLeft(2, '0');
-}
-
 class HeatmapScreen extends StatelessWidget {
   final List<List<MapCell>> map;
 
@@ -918,14 +1033,10 @@ class TelemetryData {
   final DateTime ts;
   final double rollDeg;
   final double pitchDeg;
-  final double oilPressure; // psi
-  final double oilTemp; // C
 
   TelemetryData({
     required this.ts,
     required this.rollDeg,
     required this.pitchDeg,
-    required this.oilPressure,
-    required this.oilTemp,
   });
 }

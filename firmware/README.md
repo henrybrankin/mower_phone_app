@@ -3,10 +3,40 @@
 This folder contains the Arduino Nano 33 BLE Sense Rev2 mower firmware and the
 OTA prototype configuration. The sketch advertises as `MowerEMU`, sends IMU
 telemetry, accepts zero calibration, and currently reports firmware version
-`0.1.3`.
+`0.1.4`.
 
 See [OTA-DESIGN.md](OTA-DESIGN.md) for the verified MCUboot layout, image
 formats, hardware-test results, and planned BLE update workflow.
+
+## Reserved mower I/O
+
+| Pin | Direction | Purpose | Logic |
+| --- | --- | --- | --- |
+| `A1` | Output | Siren relay driver | `HIGH` = siren on; `LOW` = siren off |
+| `A6` | Input | Oil-pressure switch | `HIGH` = pressure good; `LOW` = pressure lost |
+| `A2` | Input | Engine RPM | Conditioned flywheel-generator waveform; interface and decoder require experimental development |
+| `D9` | Output | MAX31856 chip select | SPI chip select |
+| `D10` | Input | MAX31856 `FAULT` | Thermocouple/interface fault indication |
+| `D8` | Input | MAX31856 `DRDY` | Temperature conversion data-ready indication |
+| `SCK` / `MOSI` / `MISO` | SPI | MAX31856 data interface | Nano hardware-SPI bus |
+
+These assignments are recorded for PCB and firmware development but are not
+yet implemented by the mower sketch. `A1` must default low as early as possible
+during startup. Inputs must remain within the Nano's 3.3 V limits. The proposed
+`A2` generator input requires transient protection and signal conditioning based
+on measurements of the real waveform; it must not be connected directly to the
+engine generator.
+
+Engine temperature will use a thermocouple connected to a MAX31856. Firmware
+will use the Nano's hardware SPI controller, select the converter with `D9`,
+and monitor its dedicated `FAULT` and `DRDY` signals on `D10` and `D8`. This
+interface is reserved but not yet implemented in the mower sketch.
+
+The BMM150 magnetometer and heading display were removed in firmware 0.1.4.
+The BMI270 accelerometer and gyroscope remain in use for roll and pitch, but
+the combined sensor library is started in accelerometer-only mode so it does
+not initialize or retain the BMM150 driver. This reduced the relocated Arduino
+application from 367472 to 361872 bytes, recovering 5600 bytes of flash.
 
 ## Prerequisites
 

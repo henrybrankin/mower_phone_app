@@ -11,12 +11,14 @@ class AboutDiagnosticsScreen extends StatefulWidget {
   final bool mowerConnected;
   final String? mowerFirmwareVersion;
   final MowerBleService? bleService;
+  final VoidCallback? onShowMap;
 
   const AboutDiagnosticsScreen({
     super.key,
     required this.mowerConnected,
     this.mowerFirmwareVersion,
     this.bleService,
+    this.onShowMap,
   });
 
   @override
@@ -295,6 +297,29 @@ class _AboutDiagnosticsScreenState extends State<AboutDiagnosticsScreen> {
                 icon: Icons.memory,
                 label: 'EMU firmware',
                 value: widget.mowerFirmwareVersion ?? 'Unknown',
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _SectionCard(
+            title: 'Tilt safety map',
+            children: [
+              const ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(Icons.map_outlined),
+                title: Text('Roll and pitch map'),
+                subtitle: Text(
+                  'View learned oil-pressure danger regions and map '
+                  'diagnostics. Live BLE map retrieval is not implemented yet.',
+                ),
+              ),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: OutlinedButton.icon(
+                  onPressed: widget.onShowMap,
+                  icon: const Icon(Icons.map),
+                  label: const Text('Show map'),
+                ),
               ),
             ],
           ),
